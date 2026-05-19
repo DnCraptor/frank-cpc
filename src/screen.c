@@ -381,10 +381,12 @@ void RedrawFirstLine (void) {
 /***************************************************************/
 void RedrawDirtyRows(void) {
   /* Snapshot dirty flags, modes and inks, then clear. g_in_redraw prevents
-   * re-marking during the redraw loop so the snapshot stays clean. */
-  uint8_t was_dirty[CPC_FB_ROWS];
-  uint8_t was_mode[CPC_FB_ROWS];
-  uint8_t was_ink[CPC_FB_ROWS][17];
+   * re-marking during the redraw loop so the snapshot stays clean.
+   * All snapshot arrays are static to avoid large stack allocations on
+   * the RP2350 (was_ink alone would be 200×17 = 3.4 KB on the stack). */
+  static uint8_t was_dirty[CPC_FB_ROWS];
+  static uint8_t was_mode[CPC_FB_ROWS];
+  static uint8_t was_ink[CPC_FB_ROWS][17];
   memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
   memcpy(was_mode,  g_dirty_mode, CPC_FB_ROWS);
   memcpy(was_ink,   g_dirty_ink,  sizeof(g_dirty_ink));
