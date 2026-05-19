@@ -56,6 +56,9 @@ int UpperBlockIsRAM;
 int RS_UpBlockRAM;
 int RS_LoBlockRAM;
 
+/* Overridden by cpc_settings_apply() when a specific ROM file is chosen. */
+char g_basic_rom_override[80] = "";
+
 int InitMem (void){
   static int file, length;
   static unsigned long i,j;
@@ -126,10 +129,14 @@ int InitMem (void){
   const char *basic_rom;
   FIL fp2;
   UINT bytes_read_lo = 0, bytes_read_hi = 0;
-  switch (CPCtype) {
-    case 2  : basic_rom = "/cpc/rom/cpc6128.rom"; break;
-    case 1  : basic_rom = "/cpc/rom/cpc664.rom"; break;
-    default : basic_rom = "/cpc/rom/cpc464.rom"; CPCtype=0; break;
+  if (g_basic_rom_override[0]) {
+    basic_rom = g_basic_rom_override;
+  } else {
+    switch (CPCtype) {
+      case 2  : basic_rom = "/cpc/rom/cpc6128.rom"; break;
+      case 1  : basic_rom = "/cpc/rom/cpc664.rom"; break;
+      default : basic_rom = "/cpc/rom/cpc464.rom"; CPCtype=0; break;
+    }
   }
   memset(SystemROM, 0, sizeof(SystemROM));
   memset(UpperROM[0], 0, 16384);

@@ -30,6 +30,11 @@ extern int RS_LoBlockRAM;
 
 extern byte *RAM;
 extern byte *UpperROM[8];
+
+/* When non-empty, InitMem() loads this path as the BASIC ROM instead
+ * of deriving the filename from CPCtype.  Set by cpc_settings_apply(). */
+extern char g_basic_rom_override[80];
+
 int InitMem (void);
 int ExitMem (void);
 void SelectRamBank (byte Bank);

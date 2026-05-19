@@ -124,6 +124,8 @@ void cpc_frame_sync(void) {
 #define KS_Down        0xff54
 #define KS_Left        0xff51
 #define KS_Right       0xff53
+#define KS_Page_Up     0xff55
+#define KS_Page_Down   0xff56
 #define KS_F1          0xffbe
 #define KS_F2          0xffbf
 #define KS_F3          0xffc0
@@ -264,6 +266,8 @@ static unsigned int scancode_to_keysym(unsigned int sc, bool shifted) {
         case PSC_Down:      return KS_Down;
         case PSC_Left:      return KS_Left;
         case PSC_Right:     return KS_Right;
+        case PSC_PgUp:      return KS_Page_Up;
+        case PSC_PgDn:      return KS_Page_Down;
         case PSC_F1:        return KS_F1;
         case PSC_F2:        return KS_F2;
         case PSC_F3:        return KS_F3;

@@ -27,6 +27,49 @@ extern void ResetFDC(void);
 extern void InitIO(void);
 extern void InitColors(void);
 
+/* ---- ROM list --------------------------------------------------------- */
+
+char g_cpc_rom_list[CPC_ROM_MAX][32];
+int  g_cpc_rom_count = 1;   /* always at least the "Auto" entry */
+
+/* Simple insertion sort for the ROM filenames (index 1 onward). */
+static void sort_rom_list(void) {
+    for (int i = 2; i < g_cpc_rom_count; ++i) {
+        char tmp[32];
+        strncpy(tmp, g_cpc_rom_list[i], 31); tmp[31] = 0;
+        int j = i - 1;
+        while (j >= 1 && strcasecmp(g_cpc_rom_list[j], tmp) > 0) {
+            strncpy(g_cpc_rom_list[j + 1], g_cpc_rom_list[j], 31);
+            --j;
+        }
+        strncpy(g_cpc_rom_list[j + 1], tmp, 31);
+    }
+}
+
+void cpc_settings_scan_roms(void) {
+    strncpy(g_cpc_rom_list[0], "Auto", 31);
+    g_cpc_rom_count = 1;
+
+    DIR dir;
+    FILINFO fi;
+    if (f_opendir(&dir, "/cpc/rom") != FR_OK) return;
+
+    while (f_readdir(&dir, &fi) == FR_OK && fi.fname[0]) {
+        if (fi.fattrib & AM_DIR) continue;
+        size_t n = strlen(fi.fname);
+        if (n < 5) continue;
+        const char *ext = fi.fname + n - 4;
+        if (strcasecmp(ext, ".rom") != 0) continue;
+        if (g_cpc_rom_count >= CPC_ROM_MAX) break;
+        strncpy(g_cpc_rom_list[g_cpc_rom_count], fi.fname, 31);
+        g_cpc_rom_list[g_cpc_rom_count][31] = 0;
+        ++g_cpc_rom_count;
+    }
+    f_closedir(&dir);
+    sort_rom_list();
+    printf("settings: found %d ROM(s) in /cpc/rom\n", g_cpc_rom_count - 1);
+}
+
 /* ---- defaults -------------------------------------------------------- */
 
 cpc_settings_t g_cpc_settings = {
@@ -34,6 +77,7 @@ cpc_settings_t g_cpc_settings = {
     .memory   = 1,  /* 128 KB   */
     .monitor  = 0,  /* Color    */
     .customer = 0,  /* Amstrad  */
+    .rom_idx  = 0,  /* Auto     */
 };
 
 /* ---- value tables ----------------------------------------------------- */
@@ -66,6 +110,7 @@ int cpc_settings_choices(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return 3;
         case CPC_SETTING_MONITOR:  return 2;
         case CPC_SETTING_CUSTOMER: return 8;
+        case CPC_SETTING_ROM:      return g_cpc_rom_count > 0 ? g_cpc_rom_count : 1;
         default: return 0;
     }
 }
@@ -76,6 +121,7 @@ const char *cpc_settings_label(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return "Memory";
         case CPC_SETTING_MONITOR:  return "Monitor";
         case CPC_SETTING_CUSTOMER: return "Customer";
+        case CPC_SETTING_ROM:      return "ROM";
         default: return "?";
     }
 }
@@ -86,6 +132,11 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return MEMORY_LABELS[g_cpc_settings.memory];
         case CPC_SETTING_MONITOR:  return MONITOR_LABELS[g_cpc_settings.monitor];
         case CPC_SETTING_CUSTOMER: return CUSTOMER_LABELS[g_cpc_settings.customer];
+        case CPC_SETTING_ROM: {
+            uint8_t idx = g_cpc_settings.rom_idx;
+            if (idx >= (uint8_t)g_cpc_rom_count) idx = 0;
+            return g_cpc_rom_list[idx];
+        }
         default: return "?";
     }
 }
@@ -112,6 +163,7 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
             cpc_settings_apply_visual();
             break;
         case CPC_SETTING_CUSTOMER: step_u8(&g_cpc_settings.customer, delta, n); break;
+        case CPC_SETTING_ROM:      step_u8(&g_cpc_settings.rom_idx,  delta, n); break;
         default: break;
     }
     cpc_settings_save();
@@ -137,14 +189,24 @@ void cpc_settings_apply(void) {
 
     /* Customer — raw PPI Port B value */
     Customer = (char)CUSTOMER_VALUES[g_cpc_settings.customer & 7];
+
+    /* ROM override — empty string means derive from CPCtype */
+    uint8_t ridx = g_cpc_settings.rom_idx;
+    if (ridx == 0 || ridx >= (uint8_t)g_cpc_rom_count) {
+        g_basic_rom_override[0] = '\0';
+    } else {
+        snprintf(g_basic_rom_override, sizeof(g_basic_rom_override),
+                 "/cpc/rom/%s", g_cpc_rom_list[ridx]);
+    }
 }
 
 /* Full CPC reset applying all settings.  Called from cpc_ui when the
  * user selects "Apply & Reset". */
 void cpc_settings_do_reset(void) {
     cpc_settings_apply();
-    printf("settings: reset CPCtype=%d CPCMaxMem=%d MonoScreen=%d Customer=%d\n",
-           CPCtype, CPCMaxMem, MonoScreen, (int)(unsigned char)Customer);
+    printf("settings: reset CPCtype=%d CPCMaxMem=%d MonoScreen=%d Customer=%d rom=%s\n",
+           CPCtype, CPCMaxMem, MonoScreen, (int)(unsigned char)Customer,
+           g_basic_rom_override[0] ? g_basic_rom_override : "(auto)");
     InitIO();
     InitColors();
     InitMem();
@@ -179,6 +241,9 @@ static void ini_trim(char *s) {
 }
 
 bool cpc_settings_load(void) {
+    /* Scan ROM directory first so rom_idx can be matched. */
+    cpc_settings_scan_roms();
+
     FIL f;
     if (f_open(&f, CPC_INI_PATH, FA_READ) != FR_OK) {
         printf("settings: no cpc.ini, using defaults\n");
@@ -193,6 +258,8 @@ bool cpc_settings_load(void) {
         *eq = 0;
         char *key = line, *val = eq + 1;
         ini_trim(key); ini_trim(val);
+
+        /* Numeric fields */
         for (int i = 0; i < INI_FIELD_COUNT; ++i) {
             if (strcmp(key, INI_FIELDS[i].key) == 0) {
                 char *endp = NULL;
@@ -200,6 +267,16 @@ bool cpc_settings_load(void) {
                 if (endp && endp != val && v >= 0 && v < INI_FIELDS[i].max)
                     *INI_FIELDS[i].slot = (uint8_t)v;
                 break;
+            }
+        }
+
+        /* ROM filename — find in scanned list */
+        if (strcmp(key, "rom") == 0) {
+            for (int j = 0; j < g_cpc_rom_count; ++j) {
+                if (strcasecmp(val, g_cpc_rom_list[j]) == 0) {
+                    g_cpc_settings.rom_idx = (uint8_t)j;
+                    break;
+                }
             }
         }
     }
@@ -223,6 +300,12 @@ bool cpc_settings_save(void) {
                      INI_FIELDS[i].key, (unsigned)*INI_FIELDS[i].slot);
         f_write(&f, buf, (UINT)n, &bw);
     }
+    /* ROM: store filename (robust against re-ordering) */
+    uint8_t ridx = g_cpc_settings.rom_idx;
+    if (ridx >= (uint8_t)g_cpc_rom_count) ridx = 0;
+    n = snprintf(buf, sizeof(buf), "rom=%s\n", g_cpc_rom_list[ridx]);
+    f_write(&f, buf, (UINT)n, &bw);
     f_close(&f);
     return true;
 }
+
