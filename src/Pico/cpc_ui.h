@@ -19,7 +19,10 @@ bool cpc_ui_is_visible(void);
 /* Toggle the settings overlay (mapped to F12). */
 void cpc_ui_toggle(void);
 
-/* Open the disk browser for drive drv (0=A, 1=B). */
+/* Open the disk drive selection menu (mapped to F11). */
+void cpc_ui_open_disk_menu(void);
+
+/* Open the file browser directly for drive drv (0=A, 1=B). */
 void cpc_ui_open_disk_browser(int drv);
 
 /* Non-blocking key event.  Returns true if consumed by the UI.
