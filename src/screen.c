@@ -29,6 +29,7 @@
 #define CPC_FB_ROWS 200
 static uint8_t g_dirty_rows[CPC_FB_ROWS];
 static uint8_t g_dirty_mode[CPC_FB_ROWS]; /* ScreenMode active when each row was dirtied */
+static uint8_t g_dirty_ink[CPC_FB_ROWS][17]; /* AktInk[0..16] snapshot when row was first dirtied */
 static uint8_t g_in_redraw = 0;   /* suppresses re-marking during redraw loop */
 
 #endif
@@ -113,8 +114,14 @@ void WrScreenMem (register word Addr, register byte Value) {
     if (!g_in_redraw) {
         int fb_r = scrZeile >> 1;
         if ((unsigned)fb_r < CPC_FB_ROWS) {
+            if (!g_dirty_rows[fb_r]) {
+                /* First write to this row this frame: snapshot the current
+                 * screen mode and ink palette so RedrawDirtyRows can replay
+                 * the row with the correct rendering context. */
+                g_dirty_mode[fb_r] = (uint8_t)ScreenMode;
+                memcpy(g_dirty_ink[fb_r], AktInk, 17);
+            }
             g_dirty_rows[fb_r] = 1;
-            g_dirty_mode[fb_r] = (uint8_t)ScreenMode;
         }
     }
 #else
@@ -304,6 +311,7 @@ void RedrawScreenImage(void) {
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
+  memset(g_dirty_ink,  0, sizeof(g_dirty_ink));
 #endif
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
@@ -327,6 +335,7 @@ void RedrawLastLine (void) {
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
+  memset(g_dirty_ink,  0, sizeof(g_dirty_ink));
 #endif
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
@@ -350,6 +359,7 @@ void RedrawFirstLine (void) {
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
+  memset(g_dirty_ink,  0, sizeof(g_dirty_ink));
 #endif
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
@@ -370,12 +380,14 @@ void RedrawFirstLine (void) {
 /** vs 200 for a full RedrawScreenImage() — ~10× faster.      **/
 /***************************************************************/
 void RedrawDirtyRows(void) {
-  /* Snapshot dirty flags and modes, then clear. g_in_redraw prevents
+  /* Snapshot dirty flags, modes and inks, then clear. g_in_redraw prevents
    * re-marking during the redraw loop so the snapshot stays clean. */
   uint8_t was_dirty[CPC_FB_ROWS];
   uint8_t was_mode[CPC_FB_ROWS];
+  uint8_t was_ink[CPC_FB_ROWS][17];
   memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
   memcpy(was_mode,  g_dirty_mode, CPC_FB_ROWS);
+  memcpy(was_ink,   g_dirty_ink,  sizeof(g_dirty_ink));
   memset(g_dirty_rows, 0, CPC_FB_ROWS);
 
   /* Quick exit if nothing changed this frame. */
@@ -387,12 +399,15 @@ void RedrawDirtyRows(void) {
   for (int r = 0; r < CPC_FB_ROWS; r++)
     if (was_dirty[r]) memset(cpc_fb[r], 0, CPC_FB_WIDTH);
 
-  /* Re-render dirty rows using the ScreenMode that was active when each row
-   * was originally written.  Games like Prince of Persia switch between
-   * Mode 0 (status bar) and Mode 1 (game area) within the same frame; using
-   * the current global ScreenMode at redraw time would corrupt the rows that
-   * were written in a different mode. */
+  /* Re-render dirty rows using the ScreenMode AND AktInk[] that were active
+   * when each row was originally written.  Games like Prince of Persia switch
+   * between Mode 0 (status bar, 16 inks) and Mode 1 (game area, 4 inks)
+   * within the same frame; using end-of-frame state would corrupt rows that
+   * were rendered in a different mode/palette. */
   unsigned int saved_mode = ScreenMode;
+  uint8_t saved_ink[17];
+  memcpy(saved_ink, AktInk, 17);
+
   g_in_redraw = 1;
   for (int bank = 0; bank < 8; bank++) {
     int z = bank << 11;   /* 0, 0x800, 0x1000, ... 0x3800 */
@@ -402,8 +417,9 @@ void RedrawDirtyRows(void) {
       int fb_r = scrZ >> 1;
       if ((unsigned)fb_r >= CPC_FB_ROWS || !was_dirty[fb_r]) continue;
 
-      /* Temporarily restore the mode that was active for this row. */
+      /* Restore the mode and ink palette active when this row was first written. */
       ScreenMode = was_mode[fb_r];
+      memcpy(AktInk, was_ink[fb_r], 17);
 
       /* This char-row group is dirty — render all 80 bytes. */
       int s_base = C * 80;
@@ -414,6 +430,7 @@ void RedrawDirtyRows(void) {
     }
   }
   ScreenMode = saved_mode;
+  memcpy(AktInk, saved_ink, 17);
   g_in_redraw = 0;
 }
 #endif
