@@ -327,6 +327,8 @@ void cpc_ps2_feed_events(void) {
         if (!ks) continue;
 
         if (pressed) {
+            /* F11: swallow — no "exit" on bare metal (would call ExitCPC) */
+            if (ks == KS_F11) continue;
             /* F12: toggle settings overlay */
             if (ks == KS_F12) {
                 cpc_ui_toggle();
