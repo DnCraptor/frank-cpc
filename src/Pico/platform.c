@@ -333,10 +333,9 @@ void cpc_pico_main(void) {
     init_dsp();
     ResetFDC();
 
-    ResetZ80(&Z80Register);
-    Z80Register.IPeriod = CPUZyklenBisInt;
-    Z80Register.TrapBadOps = 1;
-    Z80Register.Trace = 0;
+    ResetZ80(&cpu);
+    cpu.TrapBadOps = 1;
+    cpu.Trace = 0;
 
     printf("CPC initialized. Starting emulation...\n");
     RunZ80_cpc();

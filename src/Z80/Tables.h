@@ -7,13 +7,13 @@
 /** There are also timing tables for Z80 opcodes. This file **/
 /** is included from Z80.c.                                 **/
 /**                                                         **/
-/** Copyright (C) Marat Fayzullin 1994,1995,1996,1997       **/
+/** Copyright (C) Marat Fayzullin 1994-2007                 **/
 /**     You are not allowed to distribute this software     **/
 /**     commercially. Please, notify me, if you make any    **/   
 /**     changes to this file.                               **/
 /*************************************************************/
 
-static byte Cycles[256] =
+static const byte Cycles[256] =
 {
    4,10, 7, 6, 4, 4, 7, 4, 4,11, 7, 6, 4, 4, 7, 4,
    8,10, 7, 6, 4, 4, 7, 4,12,11, 7, 6, 4, 4, 7, 4,
@@ -33,7 +33,7 @@ static byte Cycles[256] =
    5,10,10, 4,10,11, 7,11, 5, 6,10, 4,10, 0, 7,11 
 };
 
-static byte CyclesCB[256] =
+static const byte CyclesCB[256] =
 {
    8, 8, 8, 8, 8, 8,15, 8, 8, 8, 8, 8, 8, 8,15, 8,
    8, 8, 8, 8, 8, 8,15, 8, 8, 8, 8, 8, 8, 8,15, 8,
@@ -53,7 +53,7 @@ static byte CyclesCB[256] =
    8, 8, 8, 8, 8, 8,15, 8, 8, 8, 8, 8, 8, 8,15, 8 
 };
 
-static byte CyclesED[256] =
+static const byte CyclesED[256] =
 {
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -62,7 +62,7 @@ static byte CyclesED[256] =
   12,12,15,20, 8,14, 8, 9,12,12,15,20, 0,14, 0, 9,
   12,12,15,20, 0, 0, 8, 9,12,12,15,20, 0, 0, 8, 9,
   12,12,15,20, 0, 0, 0,18,12,12,15,20, 0, 0, 0,18,
-  12, 0,15,20, 0, 0, 0, 0,12,12,15,20, 8,14, 0, 0,
+  12, 0,15,20, 0, 0, 0, 0,12,12,15,20, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
   16,16,16,16, 0, 0, 0, 0,16,16,16,16, 0, 0, 0, 0,
@@ -73,7 +73,7 @@ static byte CyclesED[256] =
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-static byte CyclesXX[256] =
+static const byte CyclesXX[256] =
 {
    0, 0, 0, 0, 0, 0, 0, 0, 0,15, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0,15, 0, 0, 0, 0, 0, 0,
@@ -81,7 +81,7 @@ static byte CyclesXX[256] =
    0, 0, 0, 0,23,23,19, 0, 0,15, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 9, 9,19, 0, 0, 0, 0, 0, 9, 9,19, 0,
    0, 0, 0, 0, 9, 9,19, 0, 0, 0, 0, 0, 9, 9,19, 0,
-   9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+   9, 9, 9, 9, 9, 9,19, 9, 9, 9, 9, 9, 9, 9,19, 9,
   19,19,19,19,19,19,19,19, 0, 0, 0, 0, 9, 9,19, 0,
    0, 0, 0, 0, 9, 9,19, 0, 0, 0, 0, 0, 9, 9,19, 0,
    0, 0, 0, 0, 9, 9,19, 0, 0, 0, 0, 0, 9, 9,19, 0,
@@ -93,7 +93,7 @@ static byte CyclesXX[256] =
    0, 0, 0, 0, 0, 0, 0, 0, 0,10, 0, 0, 0, 0, 0, 0
 };
 
-static byte CyclesXXCB[256] =
+static const byte CyclesXXCB[256] =
 {
    0, 0, 0, 0, 0, 0,23, 0, 0, 0, 0, 0, 0, 0,23, 0,
    0, 0, 0, 0, 0, 0,23, 0, 0, 0, 0, 0, 0, 0,23, 0,
@@ -113,7 +113,7 @@ static byte CyclesXXCB[256] =
    0, 0, 0, 0, 0, 0,23, 0, 0, 0, 0, 0, 0, 0,23, 0
 };
 
-static byte ZSTable[256] =
+static const byte ZSTable[256] =
 {
   Z_FLAG,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -141,7 +141,7 @@ static byte ZSTable[256] =
   S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG
 };
 
-static byte PZSTable[256] =
+static const byte PZSTable[256] =
 {
   Z_FLAG|P_FLAG,0,0,P_FLAG,0,P_FLAG,P_FLAG,0,
   0,P_FLAG,P_FLAG,0,P_FLAG,0,0,P_FLAG,
@@ -186,7 +186,7 @@ static byte PZSTable[256] =
   S_FLAG|P_FLAG,S_FLAG,S_FLAG,S_FLAG|P_FLAG
 };
 
-static word DAATable[2048] =
+static const word DAATable[2048] =
 {
   0x0044,0x0100,0x0200,0x0304,0x0400,0x0504,0x0604,0x0700,
   0x0808,0x090C,0x1010,0x1114,0x1214,0x1310,0x1414,0x1510,

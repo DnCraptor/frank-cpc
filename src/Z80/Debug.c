@@ -6,7 +6,7 @@
 /** the Z80 emulator which is called on each Z80 step when  **/
 /** Trap!=0.                                                **/
 /**                                                         **/
-/** Copyright (C) Marat Fayzullin 1995,1996,1997            **/
+/** Copyright (C) Marat Fayzullin 1995-2007                 **/
 /**     You are not allowed to distribute this software     **/
 /**     commercially. Please, notify me, if you make any    **/
 /**     changes to this file.                               **/
@@ -18,12 +18,13 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
-#include <../cpc.h>
 
-char         debugFName [255];
-unsigned int debugCount;
+#ifdef FMSX
+#include "AY8910.h"
+extern AY8910 PSG;
+#endif
 
-static char *Mnemonics[256] =
+static const char *Mnemonics[256] =
 {
   "NOP","LD BC,#h","LD (BC),A","INC BC","INC B","DEC B","LD B,*h","RLCA",
   "EX AF,AF'","ADD HL,BC","LD A,(BC)","DEC BC","INC C","DEC C","LD C,*h","RRCA",
@@ -59,7 +60,7 @@ static char *Mnemonics[256] =
   "RET M","LD SP,HL","JP M,#h","EI","CALL M,#h","PFX_FD","CP *h","RST 38h"
 };
 
-static char *MnemonicsCB[256] =
+static const char *MnemonicsCB[256] =
 {
   "RLC B","RLC C","RLC D","RLC E","RLC H","RLC L","RLC (HL)","RLC A",
   "RRC B","RRC C","RRC D","RRC E","RRC H","RRC L","RRC (HL)","RRC A",
@@ -95,7 +96,7 @@ static char *MnemonicsCB[256] =
   "SET 7,B","SET 7,C","SET 7,D","SET 7,E","SET 7,H","SET 7,L","SET 7,(HL)","SET 7,A"
 };
 
-static char *MnemonicsED[256] =
+static const char *MnemonicsED[256] =
 {
   "DB EDh,00h","DB EDh,01h","DB EDh,02h","DB EDh,03h",
   "DB EDh,04h","DB EDh,05h","DB EDh,06h","DB EDh,07h",
@@ -128,7 +129,7 @@ static char *MnemonicsED[256] =
   "IN F,(C)","DB EDh,71h","SBC HL,SP","LD (#h),SP",
   "DB EDh,74h","DB EDh,75h","DB EDh,76h","DB EDh,77h",
   "IN A,(C)","OUT (C),A","ADC HL,SP","LD SP,(#h)",
-  "NEG","RETI","DB EDh,7Eh","DB EDh,7Fh",                       /* UC Illegal commands NEG and RETI */
+  "DB EDh,7Ch","DB EDh,7Dh","DB EDh,7Eh","DB EDh,7Fh",
   "DB EDh,80h","DB EDh,81h","DB EDh,82h","DB EDh,83h",
   "DB EDh,84h","DB EDh,85h","DB EDh,86h","DB EDh,87h",
   "DB EDh,88h","DB EDh,89h","DB EDh,8Ah","DB EDh,8Bh",
@@ -163,7 +164,7 @@ static char *MnemonicsED[256] =
   "DB EDh,FCh","DB EDh,FDh","DB EDh,FEh","DB EDh,FFh"
 };
 
-static char *MnemonicsXX[256] =
+static const char *MnemonicsXX[256] =
 {
   "NOP","LD BC,#h","LD (BC),A","INC BC","INC B","DEC B","LD B,*h","RLCA",
   "EX AF,AF'","ADD I%,BC","LD A,(BC)","DEC BC","INC C","DEC C","LD C,*h","RRCA",
@@ -199,7 +200,7 @@ static char *MnemonicsXX[256] =
   "RET M","LD SP,I%","JP M,#h","EI","CALL M,#h","PFX_FD","CP *h","RST 38h"
 };
 
-static char *MnemonicsXCB[256] =
+static const char *MnemonicsXCB[256] =
 {
   "RLC B","RLC C","RLC D","RLC E","RLC H","RLC L","RLC (I%@h)","RLC A",
   "RRC B","RRC C","RRC D","RRC E","RRC H","RRC L","RRC (I%@h)","RRC A",
@@ -242,11 +243,15 @@ static char *MnemonicsXCB[256] =
 /*************************************************************/
 static int DAsm(char *S,word A)
 {
-  char R[128],H[10],C,*T,*P;
+  char R[128],H[10],C,*P;
+  const char *T;
   byte J,Offset;
   word B;
 
-  B=A;C='\0';J=0;
+  Offset=0;
+  B=A;
+  C='\0';
+  J=0;
 
   switch(RdZ80(B))
   {
@@ -303,25 +308,6 @@ static int DAsm(char *S,word A)
   return(B-A);
 }
 
-void HelpOnDebugger(void) {
-  puts("\n\n\n\n***** Built-in Z80 Debugger Commands *****");
-  puts("c          : Back to cpc4x");
-  puts("<CR>       : Break at next instruction");
-  puts("= <addr>   : Break at addr");
-  puts("+ <offset> : Break at PC + offset");
-  puts("j <addr>   : Continue from addr");
-  puts("m <addr>   : Memory dump at addr");
-  puts("d <addr>   : Disassembly at addr");
-  puts("f <num>    : Write next <num> done ops into a file");
-  puts("?,h        : Show this help text");
-  puts("q          : Exit cpc4x\n");
-}
-
-
-/** FileDebugZ80()
-/** UC This function debugs
-
-
 /** DebugZ80() ***********************************************/
 /** This function should exist if DEBUG is #defined. When   **/
 /** Trace!=0, it is called after each command executed by   **/
@@ -329,37 +315,25 @@ void HelpOnDebugger(void) {
 /*************************************************************/
 byte DebugZ80(Z80 *R)
 {
-static char Flags[8] = "SZ.H.PNC";
-char S[128],T[10];
-byte J,I;
-int l,n;
+  static const char Flags[9] = "SZ.H.PNC";
+  char S[128],T[10];
+  byte J,I;
 
-DAsm(S,R->PC.W);
-l=strlen(S);
-for(J=0,I=R->AF.B.l;J<8;J++,I<<=1) T[J]=I&0x80? Flags[J]:'.';
-T[8]='\0';
-
-if (debugCount > 0) {
-  fprintf(DebugFP,"%04X  %s",R->PC.W,S);
-  for (n=1;n<20-l;n++) fprintf (DebugFP," ");
-  fprintf(DebugFP,"AF:%04X HL:%04X DE:%04X BC:%04X SP:%04X IX:%04X IY:%04X FLAGS: [%s]\n",R->AF.W,R->HL.W,R->DE.W,R->BC.W,R->SP.W,R->IX.W,R->IY.W,T);
-  if (debugCount==1) {
-    fclose (DebugFP);
-    DebugFP = stdout;
-  }
-  debugCount --;
-}
-else {
+  DAsm(S,R->PC.W);
+  for(J=0,I=R->AF.B.l;J<8;J++,I<<=1) T[J]=I&0x80? Flags[J]:'.';
+  T[8]='\0';
 
   printf
   (
-    "AF:%04X HL:%04X DE:%04X BC:%04X PC:%04X SP:%04X IX:%04X IY:%04X\n",
-    R->AF.W,R->HL.W,R->DE.W,R->BC.W,R->PC.W,R->SP.W,R->IX.W,R->IY.W
-  );
+    "AF:%04X HL:%04X DE:%04X BC:%04X PC:%04X SP:%04X IX:%04X IY:%04X I:%02X\n",
+    R->AF.W,R->HL.W,R->DE.W,R->BC.W,R->PC.W,R->SP.W,R->IX.W,R->IY.W,R->I
+  ); 
   printf
-  (
-    "AT PC: [%02X - %s]   AT SP: [%04X]   FLAGS: [%s]\n\n",
-    RdZ80(R->PC.W),S,RdZ80(R->SP.W)+RdZ80(R->SP.W+1)*256,T
+  ( 
+    "AT PC: [%02X - %s]   AT SP: [%04X]   FLAGS: [%s]   %s: %s\n\n",
+    RdZ80(R->PC.W),S,RdZ80(R->SP.W)+RdZ80(R->SP.W+1)*256,T,
+    R->IFF&0x04? "IM2":R->IFF&0x02? "IM1":"IM0",
+    R->IFF&0x01? "EI":"DI"
   );
 
   while(1)
@@ -376,7 +350,16 @@ else {
     {
       case 'H':
       case '?':
-        HelpOnDebugger();
+        puts("\n***** Built-in Z80 Debugger Commands *****");
+        puts("<CR>       : Break at next instruction");
+        puts("= <addr>   : Break at addr");
+        puts("+ <offset> : Break at PC + offset");
+        puts("c          : Continue without break");
+        puts("j <addr>   : Continue from addr");
+        puts("m <addr>   : Memory dump at addr");
+        puts("d <addr>   : Disassembly at addr");
+        puts("?,h        : Show this help text");
+        puts("q          : Exit Z80 emulation");
         break;
 
       case '\0': return(1);
@@ -385,7 +368,7 @@ else {
                  break;
       case '+':  if(strlen(S)>=2)
                  {
-                 sscanf(S+1,"%hX",&(R->Trap));
+                   sscanf(S+1,"%hX",&(R->Trap));
                    R->Trap+=R->PC.W;R->Trace=0;
                    return(1);
                  }
@@ -393,7 +376,7 @@ else {
       case 'J':  if(strlen(S)>=2)
                  { sscanf(S+1,"%hX",&(R->PC.W));R->Trace=0;return(1); }
                  break;
-      case 'C':  R->Trap=0xFFFFFFFF;R->Trace=0;return(1);
+      case 'C':  R->Trap=0xFFFF;R->Trace=0;return(1); 
       case 'Q':  return(0);
 
       case 'M':
@@ -402,7 +385,7 @@ else {
 
           if(strlen(S)>1) sscanf(S+1,"%hX",&Addr); else Addr=R->PC.W;
           puts("");
-        for(J=0;J<16;J++)
+          for(J=0;J<16;J++)
           {
             printf("%04X: ",Addr);
             for(I=0;I<16;I++,Addr++)
@@ -419,30 +402,33 @@ else {
         {
           word Addr;
 
-        if(strlen(S)>1) sscanf(S+1,"%hX",&Addr); else Addr=R->PC.W;
+          if(strlen(S)>1) sscanf(S+1,"%hX",&Addr); else Addr=R->PC.W;
           puts("");
           for(J=0;J<16;J++)
           {
-          printf("%04X: ",Addr);
+            printf("%04X: ",Addr);
             Addr+=DAsm(S,Addr);
             puts(S);
           }
         }
         break;
 
-      case 'F':
-        if(strlen(S)>1) {
-          sscanf(S+1,"%i",&debugCount);
-          sprintf (debugFName,"%s/debugZ80.txt", WorkDirectory);
-          printf ("%3i\n", debugCount);
-          DebugFP = fopen (debugFName, "w");
+#ifdef FMSX
+      case 'S':
+        for(J=0;J<AY8910_CHANNELS;J++)
+        {
+          printf("Channel %d: Volume %d, Frequency %dHz",J,PSG.Volume[J],PSG.Freq[J]);
+          if(!(PSG.R[8+(J%3)]&0x10)) printf("\n");
+          else printf(", Envelope %d\n",PSG.R[8+(J%3)]&0x0F);
         }
-        return (1);
+        printf("Envelope period %dms\n",PSG.EPeriod);
+        break;
+#endif /* FMSX */
     }
   }
-}
-/* Continue emulation */
-return(1);
+
+  /* Continue emulation */
+  return(1);
 }
 
 #endif /* DEBUG */

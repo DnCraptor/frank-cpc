@@ -167,8 +167,8 @@ void DebugEmulation (void) {
   #ifdef DEBUG
   if (!NoDebug) {
     HelpOnDebugger();
-    Z80Register.Trace = 1;
-    Z80Register.Trap = 0x00000000;
+    cpu.Trace = 1;
+    cpu.Trap = 0x0000;
   }
   #endif
 }
@@ -236,7 +236,7 @@ void CPCKeyPress(unsigned int k) {
       case XK_F5           : SoundOn = !SoundOn; break;
       case XK_F6           : SaveScreenImage(); break;
       case XK_F7           : SetupDialog (); break;
-      case XK_F8           : ResetZ80 (&Z80Register); ResetFDC(); InitMem(); break;
+      case XK_F8           : ResetZ80 (&cpu); ResetFDC(); InitMem(); break;
       case XK_F9           : ClosePrinter (); break;
       case XK_F10          : DebugEmulation(); break;
       case XK_F11          : ExitCPC = TRUE; break;

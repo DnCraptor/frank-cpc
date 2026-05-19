@@ -16,7 +16,7 @@
 #include "cpc.h"
 
 char WorkDirectory[80];
-Z80 Z80Register;
+Z80 cpu;
 char AYRegister[16];
 int CPUZyklenBisInt;
 int IRQCount;
@@ -57,34 +57,33 @@ word LoopZ80(register Z80 *R) {
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
 
-  if (IRQCount == 6 || IRQCount == 12 || IRQCount == 18 || IRQCount == 24) {
+  /* One CPC video frame = 6 CRTC interrupt periods (300Hz/50fps = 6). */
+  if (IRQCount == 6) {
     cpc_ps2_feed_events();
 
-    if (IRQCount == 24) {
-      ChangeInk = FALSE;
-      for (i = 0; i <= 13; i++) {
-        if (AktInk[i] != Ink[i]) ChangeInk = TRUE;
-        AktInk[i] = Ink[i];
-      }
-      AktInk[14] = Ink[14];
-      AktInk[15] = Ink[15];
-      if (Ink[16] != AktInk[16]) AktInk[16] = Ink[16];
-      if (ChangeInk == TRUE) RedrawScreenImage();
-      ChangeInk = FALSE;
-      cpc_frame_present();
-      IRQCount = 0;
+    ChangeInk = FALSE;
+    for (i = 0; i <= 13; i++) {
+      if (AktInk[i] != Ink[i]) ChangeInk = TRUE;
+      AktInk[i] = Ink[i];
+    }
+    AktInk[14] = Ink[14];
+    AktInk[15] = Ink[15];
+    if (Ink[16] != AktInk[16]) AktInk[16] = Ink[16];
+    if (ChangeInk == TRUE) RedrawScreenImage();
+    ChangeInk = FALSE;
+    cpc_frame_present();
+    IRQCount = 0;
 
-      /* Heartbeat: print once per second (~12.5 frame-presents/sec). */
-      hb_frames++;
-      uint64_t now_us = time_us_64();
-      if (now_us - hb_last_us >= 1000000u) {
-        extern uint32_t irq_inx;
-        printf("[HB] alive, frame=%lu, irq=%lu, t=%lus\n",
-               (unsigned long)hb_frames,
-               (unsigned long)irq_inx,
-               (unsigned long)(now_us / 1000000u));
-        hb_last_us = now_us;
-      }
+    /* Heartbeat: print once per second (~50 fps). */
+    hb_frames++;
+    uint64_t now_us = time_us_64();
+    if (now_us - hb_last_us >= 1000000u) {
+      extern uint32_t irq_inx;
+      printf("[HB] alive, frame=%lu, irq=%lu, t=%lus\n",
+             (unsigned long)hb_frames,
+             (unsigned long)irq_inx,
+             (unsigned long)(now_us / 1000000u));
+      hb_last_us = now_us;
     }
 
     mix_notes(AYRegister);
@@ -100,8 +99,16 @@ word LoopZ80(register Z80 *R) {
 
 int RunZ80_cpc(void) {
   ExitCPC = FALSE;
-  ResetZ80(&Z80Register);
-  RunZ80(&Z80Register);
+  ResetZ80(&cpu);
+  cpu.TrapBadOps = 1;
+  cpu.Trace = 0;
+
+  while (ExitCPC == FALSE) {
+    z80_arm_exec(CPUZyklenBisInt);
+    word result = LoopZ80(&cpu);
+    if (result == INT_QUIT) break;
+    IntZ80(&cpu, result);
+  }
   return 0;
 }
 #else

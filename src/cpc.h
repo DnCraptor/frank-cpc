@@ -15,6 +15,9 @@
 #endif
 #include <stdio.h>
 #include "Z80.h"
+#ifdef PICO_BUILD
+#include "z80_arm.h"
+#endif
 
 extern Display *mydisplay;
 extern Drawable mywindow;
@@ -30,7 +33,7 @@ extern int bitmap_pad;
 extern XImage *myimage;
 extern int ExitCPC;
 
-extern Z80 Z80Register;
+extern Z80 cpu;
 extern char AYRegister[16];
 
 extern int CPCMaxMem;

@@ -82,6 +82,7 @@ target_link_libraries(drivers
 
 set(CPC_CORE
     src/Z80/Z80.c
+    src/Z80/z80_arm.S
     src/screenpos.c
     src/disc.c
     src/io.c

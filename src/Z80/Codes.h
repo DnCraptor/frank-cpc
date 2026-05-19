@@ -5,7 +5,7 @@
 /** This file contains implementation for the main table of **/
 /** Z80 commands. It is included from Z80.c.                **/
 /**                                                         **/
-/** Copyright (C) Marat Fayzullin 1994,1995,1996,1997       **/
+/** Copyright (C) Marat Fayzullin 1994-2007                 **/
 /**     You are not allowed to distribute this software     **/
 /**     commercially. Please, notify me, if you make any    **/
 /**     changes to this file.                               **/
@@ -51,7 +51,7 @@ case ADD_H:    M_ADD(R->HL.B.h);break;
 case ADD_L:    M_ADD(R->HL.B.l);break;
 case ADD_A:    M_ADD(R->AF.B.h);break;
 case ADD_xHL:  I=RdZ80(R->HL.W);M_ADD(I);break;
-case ADD_BYTE: I=RdZ80(R->PC.W++);M_ADD(I);break;
+case ADD_BYTE: I=OpZ80(R->PC.W++);M_ADD(I);break;
 
 case SUB_B:    M_SUB(R->BC.B.h);break;
 case SUB_C:    M_SUB(R->BC.B.l);break;
@@ -61,7 +61,7 @@ case SUB_H:    M_SUB(R->HL.B.h);break;
 case SUB_L:    M_SUB(R->HL.B.l);break;
 case SUB_A:    R->AF.B.h=0;R->AF.B.l=N_FLAG|Z_FLAG;break;
 case SUB_xHL:  I=RdZ80(R->HL.W);M_SUB(I);break;
-case SUB_BYTE: I=RdZ80(R->PC.W++);M_SUB(I);break;
+case SUB_BYTE: I=OpZ80(R->PC.W++);M_SUB(I);break;
 
 case AND_B:    M_AND(R->BC.B.h);break;
 case AND_C:    M_AND(R->BC.B.l);break;
@@ -71,7 +71,7 @@ case AND_H:    M_AND(R->HL.B.h);break;
 case AND_L:    M_AND(R->HL.B.l);break;
 case AND_A:    M_AND(R->AF.B.h);break;
 case AND_xHL:  I=RdZ80(R->HL.W);M_AND(I);break;
-case AND_BYTE: I=RdZ80(R->PC.W++);M_AND(I);break;
+case AND_BYTE: I=OpZ80(R->PC.W++);M_AND(I);break;
 
 case OR_B:     M_OR(R->BC.B.h);break;
 case OR_C:     M_OR(R->BC.B.l);break;
@@ -81,7 +81,7 @@ case OR_H:     M_OR(R->HL.B.h);break;
 case OR_L:     M_OR(R->HL.B.l);break;
 case OR_A:     M_OR(R->AF.B.h);break;
 case OR_xHL:   I=RdZ80(R->HL.W);M_OR(I);break;
-case OR_BYTE:  I=RdZ80(R->PC.W++);M_OR(I);break;
+case OR_BYTE:  I=OpZ80(R->PC.W++);M_OR(I);break;
 
 case ADC_B:    M_ADC(R->BC.B.h);break;
 case ADC_C:    M_ADC(R->BC.B.l);break;
@@ -91,7 +91,7 @@ case ADC_H:    M_ADC(R->HL.B.h);break;
 case ADC_L:    M_ADC(R->HL.B.l);break;
 case ADC_A:    M_ADC(R->AF.B.h);break;
 case ADC_xHL:  I=RdZ80(R->HL.W);M_ADC(I);break;
-case ADC_BYTE: I=RdZ80(R->PC.W++);M_ADC(I);break;
+case ADC_BYTE: I=OpZ80(R->PC.W++);M_ADC(I);break;
 
 case SBC_B:    M_SBC(R->BC.B.h);break;
 case SBC_C:    M_SBC(R->BC.B.l);break;
@@ -101,7 +101,7 @@ case SBC_H:    M_SBC(R->HL.B.h);break;
 case SBC_L:    M_SBC(R->HL.B.l);break;
 case SBC_A:    M_SBC(R->AF.B.h);break;
 case SBC_xHL:  I=RdZ80(R->HL.W);M_SBC(I);break;
-case SBC_BYTE: I=RdZ80(R->PC.W++);M_SBC(I);break;
+case SBC_BYTE: I=OpZ80(R->PC.W++);M_SBC(I);break;
 
 case XOR_B:    M_XOR(R->BC.B.h);break;
 case XOR_C:    M_XOR(R->BC.B.l);break;
@@ -111,7 +111,7 @@ case XOR_H:    M_XOR(R->HL.B.h);break;
 case XOR_L:    M_XOR(R->HL.B.l);break;
 case XOR_A:    R->AF.B.h=0;R->AF.B.l=P_FLAG|Z_FLAG;break;
 case XOR_xHL:  I=RdZ80(R->HL.W);M_XOR(I);break;
-case XOR_BYTE: I=RdZ80(R->PC.W++);M_XOR(I);break;
+case XOR_BYTE: I=OpZ80(R->PC.W++);M_XOR(I);break;
 
 case CP_B:     M_CP(R->BC.B.h);break;
 case CP_C:     M_CP(R->BC.B.l);break;
@@ -121,14 +121,14 @@ case CP_H:     M_CP(R->HL.B.h);break;
 case CP_L:     M_CP(R->HL.B.l);break;
 case CP_A:     R->AF.B.l=N_FLAG|Z_FLAG;break;
 case CP_xHL:   I=RdZ80(R->HL.W);M_CP(I);break;
-case CP_BYTE:  I=RdZ80(R->PC.W++);M_CP(I);break;
+case CP_BYTE:  I=OpZ80(R->PC.W++);M_CP(I);break;
                
 case LD_BC_WORD: M_LDWORD(BC);break;
 case LD_DE_WORD: M_LDWORD(DE);break;
 case LD_HL_WORD: M_LDWORD(HL);break;
 case LD_SP_WORD: M_LDWORD(SP);break;
 
-case LD_PC_HL: R->PC.W=R->HL.W;break;
+case LD_PC_HL: R->PC.W=R->HL.W;JumpZ80(R->PC.W);break;
 case LD_SP_HL: R->SP.W=R->HL.W;break;
 case LD_A_xBC: R->AF.B.h=RdZ80(R->BC.W);break;
 case LD_A_xDE: R->AF.B.h=RdZ80(R->DE.W);break;
@@ -206,7 +206,7 @@ case POP_DE:   M_POP(DE);break;
 case POP_HL:   M_POP(HL);break;
 case POP_AF:   M_POP(AF);break;
 
-case DJNZ: if(--R->BC.B.h) { M_JR; } else R->PC.W++;break;
+case DJNZ: if(--R->BC.B.h) { R->ICount-=5;M_JR; } else R->PC.W++;break;
 case JP:   M_JP;break;
 case JR:   M_JR;break;
 case CALL: M_CALL;break;
@@ -214,31 +214,27 @@ case RET:  M_RET;break;
 case SCF:  S(C_FLAG);R(N_FLAG|H_FLAG);break;
 case CPL:  R->AF.B.h=~R->AF.B.h;S(N_FLAG|H_FLAG);break;
 case NOP:  break;
-
-// case OUTA: OutZ80(RdZ80(R->PC.W++),R->AF.B.h);break;
-// case INA:  R->AF.B.h=InZ80(RdZ80(R->PC.W++));break;
-
-case OUTA: OutZ80(RdZ80(R->PC.W++) | R->AF.B.h<<8,R->AF.B.h);break;
-case INA:  R->AF.B.h=InZ80(RdZ80(R->PC.W++)| R->AF.B.h<<8);break;
+case OUTA: I=OpZ80(R->PC.W++);OutZ80(I|(R->AF.W&0xFF00),R->AF.B.h);break;
+case INA:  I=OpZ80(R->PC.W++);R->AF.B.h=InZ80(I|(R->AF.W&0xFF00));break;
 
 case HALT:
-  R->PC.W--;R->IFF|=0x80;
-  /* update refresh register */
-  R->Refresh=((R->Refresh+R->ICount) & 0x7f) | (R->Refresh & 0x80);
+  R->PC.W--;
+  R->IFF|=IFF_HALT;
+  R->IBackup=0;
   R->ICount=0;
   break;
 
 case DI:
-  R->IFF&=0xFE;
+  if(R->IFF&IFF_EI) R->ICount+=R->IBackup-1;
+  R->IFF&=~(IFF_1|IFF_2|IFF_EI);
   break;
+
 case EI:
-  R->IFF|=0x01;
-  if(R->IRequest!=INT_NONE)
+  if(!(R->IFF&(IFF_1|IFF_EI)))
   {
-    R->IFF|=0x20;
+    R->IFF|=IFF_2|IFF_EI;
     R->IBackup=R->ICount;
     R->ICount=1;
-    R->ICount=R->IPeriod;
   }
   break;
 
@@ -330,38 +326,38 @@ case LD_H_xHL:    R->HL.B.h=RdZ80(R->HL.W);break;
 case LD_L_xHL:    R->HL.B.l=RdZ80(R->HL.W);break;
 case LD_A_xHL:    R->AF.B.h=RdZ80(R->HL.W);break;
 
-case LD_B_BYTE:   R->BC.B.h=RdZ80(R->PC.W++);break;
-case LD_C_BYTE:   R->BC.B.l=RdZ80(R->PC.W++);break;
-case LD_D_BYTE:   R->DE.B.h=RdZ80(R->PC.W++);break;
-case LD_E_BYTE:   R->DE.B.l=RdZ80(R->PC.W++);break;
-case LD_H_BYTE:   R->HL.B.h=RdZ80(R->PC.W++);break;
-case LD_L_BYTE:   R->HL.B.l=RdZ80(R->PC.W++);break;
-case LD_A_BYTE:   R->AF.B.h=RdZ80(R->PC.W++);break;
-case LD_xHL_BYTE: WrZ80(R->HL.W,RdZ80(R->PC.W++));break;
+case LD_B_BYTE:   R->BC.B.h=OpZ80(R->PC.W++);break;
+case LD_C_BYTE:   R->BC.B.l=OpZ80(R->PC.W++);break;
+case LD_D_BYTE:   R->DE.B.h=OpZ80(R->PC.W++);break;
+case LD_E_BYTE:   R->DE.B.l=OpZ80(R->PC.W++);break;
+case LD_H_BYTE:   R->HL.B.h=OpZ80(R->PC.W++);break;
+case LD_L_BYTE:   R->HL.B.l=OpZ80(R->PC.W++);break;
+case LD_A_BYTE:   R->AF.B.h=OpZ80(R->PC.W++);break;
+case LD_xHL_BYTE: WrZ80(R->HL.W,OpZ80(R->PC.W++));break;
 
 case LD_xWORD_HL:
-  J.B.l=RdZ80(R->PC.W++);
-  J.B.h=RdZ80(R->PC.W++);
+  J.B.l=OpZ80(R->PC.W++);
+  J.B.h=OpZ80(R->PC.W++);
   WrZ80(J.W++,R->HL.B.l);
   WrZ80(J.W,R->HL.B.h);
   break;
 
 case LD_HL_xWORD:
-  J.B.l=RdZ80(R->PC.W++);
-  J.B.h=RdZ80(R->PC.W++);
+  J.B.l=OpZ80(R->PC.W++);
+  J.B.h=OpZ80(R->PC.W++);
   R->HL.B.l=RdZ80(J.W++);
   R->HL.B.h=RdZ80(J.W);
   break;
 
 case LD_A_xWORD:
-  J.B.l=RdZ80(R->PC.W++);
-  J.B.h=RdZ80(R->PC.W++); 
+  J.B.l=OpZ80(R->PC.W++);
+  J.B.h=OpZ80(R->PC.W++); 
   R->AF.B.h=RdZ80(J.W);
   break;
 
 case LD_xWORD_A:
-  J.B.l=RdZ80(R->PC.W++);
-  J.B.h=RdZ80(R->PC.W++);
+  J.B.l=OpZ80(R->PC.W++);
+  J.B.h=OpZ80(R->PC.W++);
   WrZ80(J.W,R->AF.B.h);
   break;
 
@@ -384,6 +380,6 @@ default:
     printf
     (
       "[Z80 %lX] Unrecognized instruction: %02X at PC=%04X\n",
-      (long)R->User,RdZ80(R->PC.W-1),R->PC.W-1
+      (long)R->User,OpZ80(R->PC.W-1),R->PC.W-1
     );
   break;
