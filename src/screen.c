@@ -166,14 +166,15 @@ void WrScreenMem (register word Addr, register byte Value) {
             }
             break;
 
-          /* Mode 2: 8 pixels × 1 CPC-px → 4 fb columns (pairs share).
-           * Take the "last write wins" pixel from the original loop order
-           * (i=0..7 ascending, last-written bits: 7,5,3,1). */
+          /* Mode 2: 8 CPC pixels (1 bit each) → 4 fb columns.
+           * Our fb is 320 wide (half of CPC's 640), so each fb cell covers
+           * two adjacent CPC pixels.  OR the pair: if either pixel is set,
+           * show ink[1].  CPC bit order: px0=bit7, px1=bit6, ..., px7=bit0. */
           case 2:
-            row[base + 0] = (Value & 0x80) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
-            row[base + 1] = (Value & 0x20) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
-            row[base + 2] = (Value & 0x08) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
-            row[base + 3] = (Value & 0x02) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            row[base + 0] = (Value & 0xC0) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            row[base + 1] = (Value & 0x30) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            row[base + 2] = (Value & 0x0C) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            row[base + 3] = (Value & 0x03) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
             break;
         }
     }
