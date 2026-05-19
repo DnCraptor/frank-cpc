@@ -53,11 +53,13 @@ static XImage g_dummy_image = {640, 400};
 XImage *myimage = &g_dummy_image;
 
 /* CPC hardware colors come from ColorRGBs/GreenRGBs in colors.c (6-bit, 0-63).
- * Scale to 8-bit for HDMI: val8 = val6 * 255 / 63. */
+ * Scale to 8-bit for HDMI: cap at 200/255 (~78%) to match CPC monitor brightness.
+ * Linear full-scale (val*255/63) produces colors too bright vs a real CPC CRT. */
 extern long ColorRGBs[32][3];
 extern long GreenRGBs[32][3];
 
-static inline uint8_t scale6to8(long v) { return (uint8_t)(v * 255 / 63); }
+/* Gamma ~2.0 approximation: darkens mid-tones to match CPC CRT appearance */
+static inline uint8_t scale6to8(long v) { return (uint8_t)(v * v * 255L / (63L * 63L)); }
 
 void cpc_init_palette(void) {
     for (int i = 0; i < 32; ++i) {
@@ -103,6 +105,8 @@ void cpc_frame_present(void) {
 static uint64_t g_next_frame_us = 0;
 #define FRAME_PERIOD_US 20000
 
+uint32_t g_frame_skips = 0;  /* overrun count, read by cpc.c heartbeat */
+
 void cpc_frame_sync(void) {
     if (g_next_frame_us == 0)
         g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
@@ -112,8 +116,10 @@ void cpc_frame_sync(void) {
         while (time_us_64() < g_next_frame_us) tight_loop_contents();
         g_next_frame_us += FRAME_PERIOD_US;
     } else if (now - g_next_frame_us > 2 * FRAME_PERIOD_US) {
+        g_frame_skips++;
         g_next_frame_us = now + FRAME_PERIOD_US;
     } else {
+        g_frame_skips++;
         g_next_frame_us += FRAME_PERIOD_US;
     }
 }

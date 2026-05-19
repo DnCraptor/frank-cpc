@@ -53,14 +53,22 @@ word LoopZ80(register Z80 *R) {
   static int i;
   static uint64_t hb_last_us = 0;
   static uint32_t hb_frames = 0;
+  static uint32_t hb_skips = 0;
+  static uint32_t hb_max_work_us = 0;
+  static uint32_t hb_max_redraw_us = 0;
+  static uint32_t hb_redraw_count = 0;
+  extern uint32_t g_frame_skips;
   (void)R;
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
 
   /* One CPC video frame = 6 CRTC interrupt periods (300Hz/50fps = 6). */
   if (IRQCount == 6) {
+    uint64_t t_frame_start = time_us_64();
+
     cpc_ps2_feed_events();
 
+    /* Palette update. */
     ChangeInk = FALSE;
     for (i = 0; i <= 13; i++) {
       if (AktInk[i] != Ink[i]) ChangeInk = TRUE;
@@ -69,25 +77,57 @@ word LoopZ80(register Z80 *R) {
     AktInk[14] = Ink[14];
     AktInk[15] = Ink[15];
     if (Ink[16] != AktInk[16]) AktInk[16] = Ink[16];
-    if (ChangeInk == TRUE) RedrawScreenImage();
+
+    if (ChangeInk) {
+      /* Palette changed — all pixels need recoloring, full redraw. */
+      uint64_t t0 = time_us_64();
+      RedrawScreenImage();
+      uint32_t dt = (uint32_t)(time_us_64() - t0);
+      if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
+      hb_redraw_count++;
+    } else {
+      /* Redraw only the rows that WrScreenMem dirtied this frame.
+       * This clears each dirty row and re-renders it from current RAM,
+       * guaranteeing no ghost pixels regardless of ScreenOffset changes. */
+      uint64_t t0 = time_us_64();
+      RedrawDirtyRows();
+      uint32_t dt = (uint32_t)(time_us_64() - t0);
+      if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
+      if (dt > 0) hb_redraw_count++;
+    }
     ChangeInk = FALSE;
     cpc_frame_present();
     IRQCount = 0;
 
-    /* Heartbeat: print once per second (~50 fps). */
+    mix_notes(AYRegister);
+
+    /* Measure work time before the sync wait. */
+    uint32_t work_us = (uint32_t)(time_us_64() - t_frame_start);
+    if (work_us > hb_max_work_us) hb_max_work_us = work_us;
+
+    cpc_frame_sync();
+
     hb_frames++;
+    uint32_t skips_now = g_frame_skips;
+    uint32_t new_skips = skips_now - hb_skips;
+    hb_skips = skips_now;
+
     uint64_t now_us = time_us_64();
+    if (hb_last_us == 0) hb_last_us = now_us;
     if (now_us - hb_last_us >= 1000000u) {
-      extern uint32_t irq_inx;
-      printf("[HB] alive, frame=%lu, irq=%lu, t=%lus\n",
+      printf("[HB] fps=%lu  work_max=%lums  redraw=%lums(n=%lu)  skips=%lu\n",
              (unsigned long)hb_frames,
-             (unsigned long)irq_inx,
-             (unsigned long)(now_us / 1000000u));
-      hb_last_us = now_us;
+             (unsigned long)(hb_max_work_us / 1000u),
+             (unsigned long)(hb_max_redraw_us / 1000u),
+             (unsigned long)hb_redraw_count,
+             (unsigned long)new_skips);
+      hb_frames        = 0;
+      hb_max_work_us   = 0;
+      hb_max_redraw_us = 0;
+      hb_redraw_count  = 0;
+      hb_last_us       = now_us;
     }
 
-    mix_notes(AYRegister);
-    cpc_frame_sync();
     Pio_B = Pio_B | 1;
   } else {
     Pio_B = Pio_B & 254;

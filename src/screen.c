@@ -21,6 +21,15 @@
 #include <stdio.h>
 #ifdef PICO_BUILD
 #include "cpc_compat.h"
+
+/* Dirty-row tracking: WrScreenMem marks the FB row it painted.
+ * RedrawDirtyRows() does a targeted end-of-frame redraw of only those rows,
+ * clearing then re-rendering each one from current video RAM.  This gives
+ * ghost-free rendering without the cost of a full 16 K redraw every frame. */
+#define CPC_FB_ROWS 200
+static uint8_t g_dirty_rows[CPC_FB_ROWS];
+static uint8_t g_in_redraw = 0;   /* suppresses re-marking during redraw loop */
+
 #endif
 #include "cpc.h"
 #include "Z80.h"
@@ -67,33 +76,109 @@ void InitScreen (void) {
 /******************************************************************/
 
 void WrScreenMem (register word Addr, register byte Value) {
+#ifdef PICO_BUILD
+    /* Non-static locals: compiler can keep them in registers (faster). */
+    int scrZeile, scrSpalte;
+    int scrAddr, RowOffsAddr;
+    int i, j;
+    long farbe;
+#else
     static int scrZeile, scrSpalte, scrBitNr;
     static int scrAddr, RowOffsAddr;
-    static int i,j;
+    static int i, j;
     static long farbe;
     static int mapdx;
+    mapdx = 0;
+#endif
 
+    RowOffsAddr = ((Addr & 0x07FF) + 2048 - ScreenOffset) & 0x07FF;
 
-    mapdx=0;  // 0: normal
-    //mapdx=1024;
+#ifdef PICO_BUILD
+    /* Bytes 2000–2047 in each 2 KB bank are the horizontal-blank region.
+     * PixelPosition[] only has valid entries for indices 0–1999; higher
+     * indices zero-initialise to {0,0} and would paint garbage at the
+     * top-left corner.  Skip them. */
+    if (RowOffsAddr >= 2000) return;
+#endif
 
-
-    RowOffsAddr = ((Addr & 0x07FF) + 2048 - ScreenOffset - mapdx) \
-                  & 0x07FF;
-    //RowOffsAddr = ((Addr & 0x07FF) + 2048 - ScreenOffset) & 0x07FF;  // ORIG
     scrAddr = (Addr & 0x3800) | RowOffsAddr;
-    //scrAddr = (Addr & 0x3800) | RowOffsAddr;  // ORIG
 
     scrZeile  = PixelPosition [scrAddr & 2047][1];
     scrSpalte = PixelPosition [scrAddr & 2047][0];
     scrZeile  = ((scrAddr >> 11)<<1) + scrZeile + LineOffset;
-    // -- memory to visible screen mapping (endless round map)
-    // X: 0..400
-    // Y: 0..???
-    //if (scrSpalte>599) scrSpalte-=600;  // max. screen width
-    if (scrZeile>399) scrZeile-=400;  // max. screen height
+    if (scrZeile>399) scrZeile-=400;
 
+#ifdef PICO_BUILD
+    if (!g_in_redraw) {
+        int fb_r = scrZeile >> 1;
+        if ((unsigned)fb_r < CPC_FB_ROWS) g_dirty_rows[fb_r] = 1;
+    }
+#else
     ScreenModified = 1;
+#endif
+
+#ifdef PICO_BUILD
+    /* Fast Pico pixel path.
+     * cpc_fb is 320x200 (half of CPC's 640x400), so every pair of adjacent
+     * CPC pixels maps to the same fb cell.  Rather than 4–16 XPutPixel calls
+     * (each with a bounds-check), write the 4 fb columns directly. */
+    {
+        uint8_t * const row = cpc_fb[scrZeile >> 1];
+        const int base = scrSpalte >> 1;
+        switch (ScreenMode) {
+
+          /* Mode 0: 2 macro-pixels × 4 CPC-px wide → 4 fb columns */
+          case 0:
+            for (i = 0; i <= 1; i++) {
+                switch ((Value << i) & 170) {
+                    case   0: farbe = PixColor[AktInk[0]];  break;
+                    case 128: farbe = PixColor[AktInk[1]];  break;
+                    case   8: farbe = PixColor[AktInk[2]];  break;
+                    case 136: farbe = PixColor[AktInk[3]];  break;
+                    case  32: farbe = PixColor[AktInk[4]];  break;
+                    case 160: farbe = PixColor[AktInk[5]];  break;
+                    case  40: farbe = PixColor[AktInk[6]];  break;
+                    case 168: farbe = PixColor[AktInk[7]];  break;
+                    case   2: farbe = PixColor[AktInk[8]];  break;
+                    case 130: farbe = PixColor[AktInk[9]];  break;
+                    case  10: farbe = PixColor[AktInk[10]]; break;
+                    case 138: farbe = PixColor[AktInk[11]]; break;
+                    case  34: farbe = PixColor[AktInk[12]]; break;
+                    case 162: farbe = PixColor[AktInk[13]]; break;
+                    case  42: farbe = PixColor[AktInk[14]]; break;
+                    default:  farbe = PixColor[AktInk[15]]; break;
+                }
+                row[base + i*2]     = (uint8_t)farbe;
+                row[base + i*2 + 1] = (uint8_t)farbe;
+            }
+            break;
+
+          /* Mode 1: 4 pixels × 2 CPC-px wide → 4 fb columns */
+          case 1:
+            for (i = 0; i <= 3; i++) {
+                switch ((Value >> i) & 17) {
+                    case  0: farbe = PixColor[AktInk[0]]; break;
+                    case  1: farbe = PixColor[AktInk[2]]; break;
+                    case 16: farbe = PixColor[AktInk[1]]; break;
+                    default: farbe = PixColor[AktInk[3]]; break;
+                }
+                row[base + 3 - i] = (uint8_t)farbe;
+            }
+            break;
+
+          /* Mode 2: 8 pixels × 1 CPC-px → 4 fb columns (pairs share).
+           * Take the "last write wins" pixel from the original loop order
+           * (i=0..7 ascending, last-written bits: 7,5,3,1). */
+          case 2:
+            row[base + 0] = (Value & 0x80) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            row[base + 1] = (Value & 0x20) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            row[base + 2] = (Value & 0x08) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            row[base + 3] = (Value & 0x02) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+            break;
+        }
+    }
+    return;
+#endif
 
     switch (ScreenMode) {
 
@@ -210,11 +295,17 @@ void WrScreenMem (register word Addr, register byte Value) {
 
 void RedrawScreenImage(void) {
   static word Addr, z, s;
+#ifdef PICO_BUILD
+  memset(cpc_fb, 0, sizeof(cpc_fb));
+  memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+#endif
+  g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
     for (s=0; s<2000; s++) {
       Addr = ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF);
       WrScreenMem (Addr, RAM[Addr]);
     }
+  g_in_redraw = 0;
 }
 
 
@@ -226,12 +317,18 @@ void RedrawScreenImage(void) {
 
 void RedrawLastLine (void) {
   static word Addr, z, s;
+#ifdef PICO_BUILD
+  memset(cpc_fb, 0, sizeof(cpc_fb));
+  memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+#endif
+  g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
     for (s=0; s<2000; s++) {
     //for (s=1920; s<2000; s++) {
       Addr = ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF);
       WrScreenMem (Addr, RAM[Addr]);
     }
+  g_in_redraw = 0;
 }
 
 
@@ -242,13 +339,74 @@ void RedrawLastLine (void) {
 
 void RedrawFirstLine (void) {
   static word Addr, z, s;
+#ifdef PICO_BUILD
+  memset(cpc_fb, 0, sizeof(cpc_fb));
+  memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+#endif
+  g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
     for (s=0; s<2000; s++) {
     //for (s=0; s<80; s++) {
       Addr = ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF);
       WrScreenMem (Addr, RAM[Addr]);
     }
+  g_in_redraw = 0;
 }
+
+#ifdef PICO_BUILD
+/***************************************************************/
+/** Redraw only the rows that were touched by WrScreenMem     **/
+/** this frame.  Each dirty row is cleared in cpc_fb then     **/
+/** re-rendered from current video RAM.  Non-dirty rows are   **/
+/** left untouched.  Typically ~20 rows for a sprite game,    **/
+/** vs 200 for a full RedrawScreenImage() — ~10× faster.      **/
+/***************************************************************/
+void RedrawDirtyRows(void) {
+  /* Snapshot dirty flags and clear. g_in_redraw prevents re-marking
+   * during the redraw loop so the snapshot stays clean. */
+  uint8_t was_dirty[CPC_FB_ROWS];
+  memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
+  memset(g_dirty_rows, 0, CPC_FB_ROWS);
+
+  /* Quick exit if nothing changed this frame. */
+  int any = 0;
+  for (int r = 0; r < CPC_FB_ROWS; r++) if (was_dirty[r]) { any = 1; break; }
+  if (!any) return;
+
+  /* Clear only the dirty rows in the framebuffer. */
+  for (int r = 0; r < CPC_FB_ROWS; r++)
+    if (was_dirty[r]) memset(cpc_fb[r], 0, CPC_FB_WIDTH);
+
+  /* Re-render dirty rows.
+   *
+   * The CPC screen is organised as 8 banks × 25 char-rows × 80 bytes.
+   * Within a bank, all 80 bytes of char-row C share the same Y value:
+   *   PixelPosition[C*80 + col][1] == C * 16   (for any col 0..79)
+   * so the fb_row = (bank*2 + C*16 + LineOffset)/2 is CONSTANT for
+   * the entire 80-byte group.  We therefore check the dirty flag once
+   * per (bank, char-row) pair — only 200 outer iterations — and only
+   * call WrScreenMem for the 80 bytes of groups that are actually dirty.
+   * This eliminates the 16 K-iteration overhead of the previous loop. */
+  g_in_redraw = 1;
+  for (int bank = 0; bank < 8; bank++) {
+    int z = bank << 11;   /* 0, 0x800, 0x1000, ... 0x3800 */
+    for (int C = 0; C < 25; C++) {
+      int scrZ = bank * 2 + C * 16 + (int)LineOffset;
+      if (scrZ > 399) scrZ -= 400;
+      int fb_r = scrZ >> 1;
+      if ((unsigned)fb_r >= CPC_FB_ROWS || !was_dirty[fb_r]) continue;
+
+      /* This char-row group is dirty — render all 80 bytes. */
+      int s_base = C * 80;
+      for (int s = s_base; s < s_base + 80; s++) {
+        word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
+        WrScreenMem(Addr, RAM[Addr]);
+      }
+    }
+  }
+  g_in_redraw = 0;
+}
+#endif
 
 /******************************************************************/
 

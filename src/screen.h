@@ -44,4 +44,8 @@ void RedrawLastLine (void);
 void RedrawFirstLine (void);
 void SaveScreenAsXPM (char *filename);
 
+#ifdef PICO_BUILD
+void RedrawDirtyRows(void);
+#endif
+
 #endif

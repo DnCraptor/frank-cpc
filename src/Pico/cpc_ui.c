@@ -480,10 +480,20 @@ static void render_disk_browser(uint8_t *fb, int stride) {
 
         ui_fill_rect(fb, stride, x, y, cw, UI_LINE_H, bg);
 
+        /* Max chars that fit from (x+2) to right edge (leave 8px margin for scrollbar) */
+        int max_item_chars = (cw - 10) / UI_CHAR_W;
+
         if (disk_has_eject() && i == 0) {
             const char *mounted = cpc_mounted_disk_name(s_disk_drive);
             char item[CPC_DISK_FILENAME_LEN + 16];
             snprintf(item, sizeof(item), "[Eject: %s]", mounted);
+            int len = (int)strlen(item);
+            if (len > max_item_chars && max_item_chars > 3) {
+                item[max_item_chars - 3] = '.';
+                item[max_item_chars - 2] = '.';
+                item[max_item_chars - 1] = '.';
+                item[max_item_chars]     = '\0';
+            }
             ui_draw_string(fb, stride, x + 2, y + 1, item, fg);
         } else if (i == disk_dotdot_row()) {
             /* Always show ".." — dimmed when already at root */
@@ -498,6 +508,13 @@ static void render_disk_browser(uint8_t *fb, int stride) {
                 snprintf(item, sizeof(item), "[%s/]", g_cpc_disk_entries[ei].name);
             else
                 snprintf(item, sizeof(item), " %s",  g_cpc_disk_entries[ei].name);
+            int len = (int)strlen(item);
+            if (len > max_item_chars && max_item_chars > 3) {
+                item[max_item_chars - 3] = '.';
+                item[max_item_chars - 2] = '.';
+                item[max_item_chars - 1] = '.';
+                item[max_item_chars]     = '\0';
+            }
             ui_draw_string(fb, stride, x + 2, y + 1, item, fg);
         }
 
