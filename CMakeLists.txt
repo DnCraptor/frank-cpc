@@ -100,6 +100,10 @@ set(CPC_ADAPTED
 set(PICO_PORT
     src/Pico/main.c
     src/Pico/platform.c
+    src/Pico/cpc_settings.c
+    src/Pico/cpc_ui.c
+    src/Pico/ui_draw.c
+    src/Pico/ui_font.c
 )
 
 set(CPC_STUBS

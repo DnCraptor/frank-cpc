@@ -24,6 +24,8 @@
 #include "printer.h"
 #include "aysound.h"
 #include "io.h"
+#include "cpc_settings.h"
+#include "cpc_ui.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -87,6 +89,11 @@ void cpc_frame_present(void) {
     memcpy(dst + CPC_FB_WIDTH * top_pad, cpc_fb, CPC_FB_WIDTH * CPC_FB_HEIGHT);
     memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
            (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
+
+    /* Render settings overlay on top if visible */
+    if (cpc_ui_is_visible())
+        cpc_ui_render(dst, CPC_FB_WIDTH, CPC_SCREEN_LINES);
+
     current_buffer ^= 1u;
 }
 
@@ -294,8 +301,22 @@ void cpc_ps2_feed_events(void) {
                                              shifted && key != PSC_LShift && key != PSC_RShift);
         if (!ks) continue;
 
-        if (pressed) CPCKeyPress(ks);
-        else         CPCKeyRelease(ks);
+        if (pressed) {
+            /* F12: toggle settings overlay */
+            if (ks == KS_F12) {
+                cpc_ui_toggle();
+                continue;
+            }
+            /* While settings overlay is open, route all keys to it */
+            if (cpc_ui_is_visible()) {
+                cpc_ui_handle_key(ks);
+                continue;
+            }
+            CPCKeyPress(ks);
+        } else {
+            if (cpc_ui_is_visible()) continue;
+            CPCKeyRelease(ks);
+        }
     }
 }
 
@@ -310,18 +331,19 @@ void cpc_pico_main(void) {
     PrinterCmdLine[0] = '\0';
     memset(AYRegister, 0, sizeof(AYRegister));
 
-    CPCMaxMem = 128;
-    CPCtype   = 2;
-    MonoScreen = 0;
-    Customer  = 14;
     snprintf(Language, sizeof(Language), "eng");
     for (int i = 1; i <= 6; ++i) snprintf(ROMFile[i], 80, "\n");
     snprintf(ROMFile[7], 80, "amsdos.rom\n");
     snprintf(DiscDir[0], 80, "disc\n");
     snprintf(DiscDir[1], 80, "disc\n");
 
+    /* Load saved settings; apply to CPCtype/CPCMaxMem/MonoScreen/Customer */
+    cpc_settings_load();
+    cpc_settings_apply();
+
     InitIO();
     InitColors();
+    cpc_ui_init();      /* install UI palette entries (uses HDMI palette) */
     if (!InitMem()) {
         printf("Failed to initialize CPC memory/ROMs\n");
         while (true) tight_loop_contents();
