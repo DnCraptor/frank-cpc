@@ -81,20 +81,13 @@ void cpc_init_palette(void) {
 }
 
 void cpc_frame_present(void) {
-    /* AktInk[16] = CPC border ink index — use it for top/bottom padding so
-     * the area surrounding the active image shows the correct CPC border
-     * colour rather than grey (palette index 0). */
-    extern byte AktInk[];
-    const uint8_t border = (uint8_t)AktInk[16];
-
-    /* Centre 200 active rows in 240 screen rows: 20 rows top + 200 + 20 bottom */
-    const int top_pad = (CPC_SCREEN_LINES - CPC_FB_HEIGHT) / 2; /* = 20 */
-
+    /* No scaling / centering — copy raw 320x200 fb directly to rows 0-199,
+     * fill remaining rows with black.  Allows seeing native pixel output
+     * before aspect-ratio correction is applied. */
     uint8_t *dst = SCREEN[current_buffer];
-    memset(dst, border, (size_t)(CPC_FB_WIDTH * top_pad));
-    memcpy(dst + CPC_FB_WIDTH * top_pad, cpc_fb, CPC_FB_WIDTH * CPC_FB_HEIGHT);
-    memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
-           (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
+    memcpy(dst, cpc_fb, CPC_FB_WIDTH * CPC_FB_HEIGHT);
+    memset(dst + CPC_FB_WIDTH * CPC_FB_HEIGHT, 0,
+           (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - CPC_FB_HEIGHT)));
 
     /* Render settings overlay on top if visible */
     if (cpc_ui_is_visible())
