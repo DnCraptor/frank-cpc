@@ -28,6 +28,7 @@
  * ghost-free rendering without the cost of a full 16 K redraw every frame. */
 #define CPC_FB_ROWS 200
 static uint8_t g_dirty_rows[CPC_FB_ROWS];
+static uint8_t g_dirty_mode[CPC_FB_ROWS]; /* ScreenMode active when each row was dirtied */
 static uint8_t g_in_redraw = 0;   /* suppresses re-marking during redraw loop */
 
 #endif
@@ -111,7 +112,10 @@ void WrScreenMem (register word Addr, register byte Value) {
 #ifdef PICO_BUILD
     if (!g_in_redraw) {
         int fb_r = scrZeile >> 1;
-        if ((unsigned)fb_r < CPC_FB_ROWS) g_dirty_rows[fb_r] = 1;
+        if ((unsigned)fb_r < CPC_FB_ROWS) {
+            g_dirty_rows[fb_r] = 1;
+            g_dirty_mode[fb_r] = (uint8_t)ScreenMode;
+        }
     }
 #else
     ScreenModified = 1;
@@ -299,6 +303,7 @@ void RedrawScreenImage(void) {
 #ifdef PICO_BUILD
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+  memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
 #endif
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
@@ -321,6 +326,7 @@ void RedrawLastLine (void) {
 #ifdef PICO_BUILD
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+  memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
 #endif
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
@@ -343,6 +349,7 @@ void RedrawFirstLine (void) {
 #ifdef PICO_BUILD
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+  memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
 #endif
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
@@ -363,10 +370,12 @@ void RedrawFirstLine (void) {
 /** vs 200 for a full RedrawScreenImage() — ~10× faster.      **/
 /***************************************************************/
 void RedrawDirtyRows(void) {
-  /* Snapshot dirty flags and clear. g_in_redraw prevents re-marking
-   * during the redraw loop so the snapshot stays clean. */
+  /* Snapshot dirty flags and modes, then clear. g_in_redraw prevents
+   * re-marking during the redraw loop so the snapshot stays clean. */
   uint8_t was_dirty[CPC_FB_ROWS];
+  uint8_t was_mode[CPC_FB_ROWS];
   memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
+  memcpy(was_mode,  g_dirty_mode, CPC_FB_ROWS);
   memset(g_dirty_rows, 0, CPC_FB_ROWS);
 
   /* Quick exit if nothing changed this frame. */
@@ -378,16 +387,12 @@ void RedrawDirtyRows(void) {
   for (int r = 0; r < CPC_FB_ROWS; r++)
     if (was_dirty[r]) memset(cpc_fb[r], 0, CPC_FB_WIDTH);
 
-  /* Re-render dirty rows.
-   *
-   * The CPC screen is organised as 8 banks × 25 char-rows × 80 bytes.
-   * Within a bank, all 80 bytes of char-row C share the same Y value:
-   *   PixelPosition[C*80 + col][1] == C * 16   (for any col 0..79)
-   * so the fb_row = (bank*2 + C*16 + LineOffset)/2 is CONSTANT for
-   * the entire 80-byte group.  We therefore check the dirty flag once
-   * per (bank, char-row) pair — only 200 outer iterations — and only
-   * call WrScreenMem for the 80 bytes of groups that are actually dirty.
-   * This eliminates the 16 K-iteration overhead of the previous loop. */
+  /* Re-render dirty rows using the ScreenMode that was active when each row
+   * was originally written.  Games like Prince of Persia switch between
+   * Mode 0 (status bar) and Mode 1 (game area) within the same frame; using
+   * the current global ScreenMode at redraw time would corrupt the rows that
+   * were written in a different mode. */
+  unsigned int saved_mode = ScreenMode;
   g_in_redraw = 1;
   for (int bank = 0; bank < 8; bank++) {
     int z = bank << 11;   /* 0, 0x800, 0x1000, ... 0x3800 */
@@ -397,6 +402,9 @@ void RedrawDirtyRows(void) {
       int fb_r = scrZ >> 1;
       if ((unsigned)fb_r >= CPC_FB_ROWS || !was_dirty[fb_r]) continue;
 
+      /* Temporarily restore the mode that was active for this row. */
+      ScreenMode = was_mode[fb_r];
+
       /* This char-row group is dirty — render all 80 bytes. */
       int s_base = C * 80;
       for (int s = s_base; s < s_base + 80; s++) {
@@ -405,6 +413,7 @@ void RedrawDirtyRows(void) {
       }
     }
   }
+  ScreenMode = saved_mode;
   g_in_redraw = 0;
 }
 #endif
