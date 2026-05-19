@@ -87,6 +87,7 @@ struct DskImg {
 extern byte FloppyMotor;
 extern word FDCPointer;
 extern float SeekTrackTime;
+extern struct DskImg dsk[2];
 
 void InsertDisk (int DrvNum);
 void WriteDskImage (int DrvNum);

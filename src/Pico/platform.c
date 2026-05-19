@@ -26,6 +26,7 @@
 #include "io.h"
 #include "cpc_settings.h"
 #include "cpc_ui.h"
+#include "cpc_loader.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -331,7 +332,16 @@ void cpc_ps2_feed_events(void) {
                 cpc_ui_toggle();
                 continue;
             }
-            /* While settings overlay is open, route all keys to it */
+            /* F1/F2: disk browser for drive A/B */
+            if (ks == KS_F1) {
+                cpc_ui_open_disk_browser(0);
+                continue;
+            }
+            if (ks == KS_F2) {
+                cpc_ui_open_disk_browser(1);
+                continue;
+            }
+            /* While overlay is open, route all keys to it */
             if (cpc_ui_is_visible()) {
                 cpc_ui_handle_key(ks);
                 continue;
@@ -375,6 +385,7 @@ void cpc_pico_main(void) {
     InitScreen();
     InitKeyboard();
     InitDisc();
+    cpc_disk_autoload();    /* load drivea.dsk / driveb.dsk if present */
     InitPrinter();
     init_dsp();
     ResetFDC();

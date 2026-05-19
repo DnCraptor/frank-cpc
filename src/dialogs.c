@@ -12,13 +12,11 @@ int PassDriveSelect;
 
 static FIL g_dialog_file;
 
-static int has_dsk_ext(const char *name) {
-    size_t len = strlen(name);
-    return len >= 4
-        && name[len - 4] == '.'
-        && ((name[len - 3] | 32) == 'd')
-        && ((name[len - 2] | 32) == 's')
-        && ((name[len - 1] | 32) == 'k');
+/* When non-empty, SelectDiskFile() uses this path instead of scanning. */
+static char g_pending_disk_path[256] = "";
+
+void SetPendingDiskPath(const char *path) {
+    snprintf(g_pending_disk_path, sizeof(g_pending_disk_path), "%s", path);
 }
 
 static int open_selected_disk(const char *path, int *wrprotect) {
@@ -34,32 +32,27 @@ static int open_selected_disk(const char *path, int *wrprotect) {
 }
 
 int SelectDiskFile(char *filename, int *DrvNum, int *WrProtect) {
+    /* UI-selected path takes priority */
+    if (g_pending_disk_path[0]) {
+        int fid = open_selected_disk(g_pending_disk_path, WrProtect);
+        snprintf(filename, 255, "%s", g_pending_disk_path);
+        g_pending_disk_path[0] = '\0';
+        if (fid > 0) {
+            printf("Inserted disk[%d]: %s\n", *DrvNum, filename);
+            return fid;
+        }
+        printf("Failed to open disk: %s\n", filename);
+        return -1;
+    }
+
+    /* Fallback: try default filenames */
     const char *preferred = (*DrvNum == 0) ? "/cpc/disk/drivea.dsk" : "/cpc/disk/driveb.dsk";
     int fid = open_selected_disk(preferred, WrProtect);
     if (fid > 0) {
         snprintf(filename, 255, "%s", preferred);
-        printf("Inserted disk: %s\n", filename);
+        printf("Inserted disk[%d]: %s\n", *DrvNum, filename);
         return fid;
     }
-
-    DIR dir;
-    FILINFO fno;
-    if (f_opendir(&dir, "/cpc/disk") == FR_OK) {
-        while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0]) {
-            if ((fno.fattrib & AM_DIR) == 0 && has_dsk_ext(fno.fname)) {
-                snprintf(filename, 255, "/cpc/disk/%s", fno.fname);
-                fid = open_selected_disk(filename, WrProtect);
-                if (fid > 0) {
-                    printf("Inserted disk: %s\n", filename);
-                    f_closedir(&dir);
-                    return fid;
-                }
-            }
-        }
-        f_closedir(&dir);
-    }
-
-    printf("No .dsk files found in /cpc/disk\n");
     return -1;
 }
 

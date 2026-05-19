@@ -2,7 +2,7 @@
  * frank-cpc — CPC emulator for RP2350
  * SPDX-License-Identifier: GPL-2.0-only
  *
- * cpc_ui.h — settings overlay UI (toggle with F12).
+ * cpc_ui.h — settings overlay + disk browser UI.
  */
 #ifndef CPC_UI_H
 #define CPC_UI_H
@@ -18,6 +18,9 @@ bool cpc_ui_is_visible(void);
 
 /* Toggle the settings overlay (mapped to F12). */
 void cpc_ui_toggle(void);
+
+/* Open the disk browser for drive drv (0=A, 1=B). */
+void cpc_ui_open_disk_browser(int drv);
 
 /* Non-blocking key event.  Returns true if consumed by the UI.
  * Key codes use the same KS_* constants as platform.c. */
