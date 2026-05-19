@@ -170,7 +170,7 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
 }
 
 void cpc_settings_apply_visual(void) {
-    MonoScreen = g_cpc_settings.monitor ? 1 : 0;
+    MonoScreen = g_cpc_settings.monitor ? 32 : 0;
 }
 
 void cpc_settings_apply(void) {
