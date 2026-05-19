@@ -406,6 +406,11 @@ static void render_disk_menu(uint8_t *fb, int stride) {
     int y  = content_y();
     int cw = content_w();
 
+    /* "Drive X:" label width + inner padding */
+    const int label_w = 9 * UI_CHAR_W;  /* "Drive A: " */
+    const int name_avail = cw - 8 - label_w;
+    const int max_chars  = name_avail / UI_CHAR_W;
+
     for (int drv = 0; drv < 2; ++drv) {
         bool    sel = (drv == s_menu_row);
         uint8_t bg  = sel ? UI_COLOR_ACCENT    : UI_COLOR_BG;
@@ -414,15 +419,26 @@ static void render_disk_menu(uint8_t *fb, int stride) {
         ui_fill_rect(fb, stride, x, y, cw, UI_LINE_H + 2, bg);
 
         /* Drive label left */
-        char label[8];
+        char label[12];
         snprintf(label, sizeof(label), "Drive %c:", 'A' + drv);
         ui_draw_string(fb, stride, x + 4, y + 2, label, fg);
 
-        /* Mounted name right, or "(empty)" dimmed */
+        /* Mounted name right (truncated with "..." if needed), or "(empty)" */
         const char *name = cpc_mounted_disk_name(drv);
         if (name) {
-            int nx = x + cw - 4 - (int)strlen(name) * UI_CHAR_W;
-            ui_draw_string(fb, stride, nx, y + 2, name, fg);
+            int len = (int)strlen(name);
+            char buf[CPC_DISK_FILENAME_LEN + 4];
+            if (len <= max_chars) {
+                memcpy(buf, name, (size_t)len + 1);
+            } else {
+                int show = max_chars - 3;
+                if (show < 1) show = 1;
+                memcpy(buf, name, (size_t)show);
+                buf[show] = '.'; buf[show+1] = '.'; buf[show+2] = '.'; buf[show+3] = '\0';
+                len = max_chars;
+            }
+            int nx = x + cw - 4 - len * UI_CHAR_W;
+            ui_draw_string(fb, stride, nx, y + 2, buf, fg);
         } else {
             const char *empty = "(empty)";
             int nx = x + cw - 4 - (int)strlen(empty) * UI_CHAR_W;
