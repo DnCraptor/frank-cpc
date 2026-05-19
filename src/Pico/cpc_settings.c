@@ -190,14 +190,8 @@ void cpc_settings_apply(void) {
     /* Customer — raw PPI Port B value */
     Customer = (char)CUSTOMER_VALUES[g_cpc_settings.customer & 7];
 
-    /* ROM override — empty string means derive from CPCtype */
-    uint8_t ridx = g_cpc_settings.rom_idx;
-    if (ridx == 0 || ridx >= (uint8_t)g_cpc_rom_count) {
-        g_basic_rom_override[0] = '\0';
-    } else {
-        snprintf(g_basic_rom_override, sizeof(g_basic_rom_override),
-                 "/cpc/rom/%s", g_cpc_rom_list[ridx]);
-    }
+    /* ROM override — forced Auto until ROM selection is re-enabled */
+    g_basic_rom_override[0] = '\0';
 }
 
 /* Full CPC reset applying all settings.  Called from cpc_ui when the

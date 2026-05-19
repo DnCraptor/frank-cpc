@@ -26,8 +26,8 @@ typedef enum {
     CPC_SETTING_MEMORY,     /* 64K / 128K / 576K              (needs reset) */
     CPC_SETTING_MONITOR,    /* Color / Green                  (live)        */
     CPC_SETTING_CUSTOMER,   /* Amstrad / Schneider / ...      (needs reset) */
-    CPC_SETTING_ROM,        /* Auto / <filename.rom>          (needs reset) */
-    CPC_SETTING_COUNT
+    CPC_SETTING_COUNT,      /* ---- visible settings end here ---- */
+    CPC_SETTING_ROM,        /* Auto / <filename.rom>  — hidden for now      */
 } cpc_setting_id_t;
 
 typedef struct {
