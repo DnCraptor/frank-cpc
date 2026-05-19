@@ -42,10 +42,10 @@
 #define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 2)
 #define SETTINGS_VISIBLE_ROWS 10
 
-/* Disk browser rows: row 0 = Eject, row 1 = "..", rows 2..N = file entries */
-#define DISK_EJECT_ROW    0
-#define DISK_DOTDOT_ROW   1
-#define DISK_ENTRY_OFFSET 2
+/* Disk browser rows are dynamic depending on whether a disk is mounted:
+ *   mounted:   row 0=[Eject]  row 1=[..]  row 2+=entries
+ *   not mounted:               row 0=[..]  row 1+=entries
+ */
 #define DISK_VISIBLE_ROWS 11
 
 /* ---- state ----------------------------------------------------------- */
@@ -66,16 +66,17 @@ static int        s_menu_row         = 0;   /* 0=Drive A, 1=Drive B */
 
 /* Disk browser state */
 static int        s_disk_drive       = 0;
-static int        s_disk_row         = 0;   /* 0=Eject, 1+=file entry */
+static int        s_disk_row         = 0;
 static int        s_disk_scroll      = 0;
 static char       s_disk_msg[64]     = "";
 
-/* ---- helpers --------------------------------------------------------- */
-
-/* Total virtual rows in browser = 1 (eject) + entry count */
-static int disk_total_rows(void) {
-    return DISK_ENTRY_OFFSET + g_cpc_disk_entry_count;
+/* Dynamic row helpers (depend on s_disk_drive, so defined after state vars) */
+static bool disk_has_eject(void) {
+    return cpc_mounted_disk_name(s_disk_drive) != NULL;
 }
+static int disk_dotdot_row(void)   { return disk_has_eject() ? 1 : 0; }
+static int disk_entry_offset(void) { return disk_has_eject() ? 2 : 1; }
+static int disk_total_rows(void)   { return disk_entry_offset() + g_cpc_disk_entry_count; }
 
 /* ---- public ---------------------------------------------------------- */
 
@@ -245,9 +246,9 @@ static bool handle_disk_browser_key(unsigned int ks) {
             return true;
 
         case KS_BackSpace: {
-            /* Backspace still works as a shortcut for going up */
+            /* Backspace shortcut for going up */
             int cnt = cpc_disk_enter_parent();
-            s_disk_row = DISK_DOTDOT_ROW; s_disk_scroll = 0;
+            s_disk_row = disk_dotdot_row(); s_disk_scroll = 0;
             snprintf(s_disk_msg, sizeof(s_disk_msg),
                      "%d item%s", cnt, cnt == 1 ? "" : "s");
             return true;
@@ -255,7 +256,7 @@ static bool handle_disk_browser_key(unsigned int ks) {
 
         case KS_Return:
         case KS_Right:
-            if (s_disk_row == DISK_EJECT_ROW) {
+            if (disk_has_eject() && s_disk_row == 0) {
                 /* Eject */
                 cpc_eject_disk(s_disk_drive);
                 snprintf(s_disk_msg, sizeof(s_disk_msg),
@@ -263,20 +264,20 @@ static bool handle_disk_browser_key(unsigned int ks) {
                 s_state = UI_DISK_MENU;
                 return true;
             }
-            if (s_disk_row == DISK_DOTDOT_ROW) {
+            if (s_disk_row == disk_dotdot_row()) {
                 /* Go up one directory */
                 int cnt = cpc_disk_enter_parent();
-                s_disk_row = DISK_DOTDOT_ROW; s_disk_scroll = 0;
+                s_disk_row = disk_dotdot_row(); s_disk_scroll = 0;
                 snprintf(s_disk_msg, sizeof(s_disk_msg),
                          "%d item%s", cnt, cnt == 1 ? "" : "s");
                 return true;
             }
             {
-                int ei = s_disk_row - DISK_ENTRY_OFFSET;
+                int ei = s_disk_row - disk_entry_offset();
                 if (ei < 0 || ei >= g_cpc_disk_entry_count) return true;
                 if (g_cpc_disk_entries[ei].is_dir) {
                     int cnt = cpc_disk_enter_subdir(g_cpc_disk_entries[ei].name);
-                    s_disk_row = DISK_DOTDOT_ROW; s_disk_scroll = 0;
+                    s_disk_row = disk_dotdot_row(); s_disk_scroll = 0;
                     snprintf(s_disk_msg, sizeof(s_disk_msg),
                              "%d item%s", cnt, cnt == 1 ? "" : "s");
                 } else {
@@ -463,23 +464,19 @@ static void render_disk_browser(uint8_t *fb, int stride) {
 
         ui_fill_rect(fb, stride, x, y, cw, UI_LINE_H, bg);
 
-        if (i == DISK_EJECT_ROW) {
+        if (disk_has_eject() && i == 0) {
             const char *mounted = cpc_mounted_disk_name(s_disk_drive);
             char item[CPC_DISK_FILENAME_LEN + 16];
-            if (mounted)
-                snprintf(item, sizeof(item), "[Eject: %s]", mounted);
-            else
-                snprintf(item, sizeof(item), "[Eject]");
-            uint8_t efg = (mounted || sel) ? fg : UI_COLOR_DIM;
-            ui_draw_string(fb, stride, x + 2, y + 1, item, efg);
-        } else if (i == DISK_DOTDOT_ROW) {
+            snprintf(item, sizeof(item), "[Eject: %s]", mounted);
+            ui_draw_string(fb, stride, x + 2, y + 1, item, fg);
+        } else if (i == disk_dotdot_row()) {
             /* Always show ".." — dimmed when already at root */
             bool at_root = (strcmp(g_cpc_disk_dir, "/cpc/disk") == 0
                          || strcmp(g_cpc_disk_dir, "/") == 0);
             uint8_t dfg = (!at_root || sel) ? fg : UI_COLOR_DIM;
             ui_draw_string(fb, stride, x + 2, y + 1, "[..]", dfg);
         } else {
-            int ei = i - DISK_ENTRY_OFFSET;
+            int ei = i - disk_entry_offset();
             char item[CPC_DISK_FILENAME_LEN + 8];
             if (g_cpc_disk_entries[ei].is_dir)
                 snprintf(item, sizeof(item), "[%s/]", g_cpc_disk_entries[ei].name);
