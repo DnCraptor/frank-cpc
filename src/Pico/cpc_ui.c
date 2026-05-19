@@ -42,9 +42,10 @@
 #define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 2)
 #define SETTINGS_VISIBLE_ROWS 10
 
-/* Disk browser rows: row 0 = Eject, rows 1..N = file entries */
+/* Disk browser rows: row 0 = Eject, row 1 = "..", rows 2..N = file entries */
 #define DISK_EJECT_ROW    0
-#define DISK_ENTRY_OFFSET 1
+#define DISK_DOTDOT_ROW   1
+#define DISK_ENTRY_OFFSET 2
 #define DISK_VISIBLE_ROWS 11
 
 /* ---- state ----------------------------------------------------------- */
@@ -244,9 +245,9 @@ static bool handle_disk_browser_key(unsigned int ks) {
             return true;
 
         case KS_BackSpace: {
-            /* Go up one directory */
+            /* Backspace still works as a shortcut for going up */
             int cnt = cpc_disk_enter_parent();
-            s_disk_row = DISK_ENTRY_OFFSET; s_disk_scroll = 0;
+            s_disk_row = DISK_DOTDOT_ROW; s_disk_scroll = 0;
             snprintf(s_disk_msg, sizeof(s_disk_msg),
                      "%d item%s", cnt, cnt == 1 ? "" : "s");
             return true;
@@ -262,12 +263,20 @@ static bool handle_disk_browser_key(unsigned int ks) {
                 s_state = UI_DISK_MENU;
                 return true;
             }
+            if (s_disk_row == DISK_DOTDOT_ROW) {
+                /* Go up one directory */
+                int cnt = cpc_disk_enter_parent();
+                s_disk_row = DISK_DOTDOT_ROW; s_disk_scroll = 0;
+                snprintf(s_disk_msg, sizeof(s_disk_msg),
+                         "%d item%s", cnt, cnt == 1 ? "" : "s");
+                return true;
+            }
             {
                 int ei = s_disk_row - DISK_ENTRY_OFFSET;
                 if (ei < 0 || ei >= g_cpc_disk_entry_count) return true;
                 if (g_cpc_disk_entries[ei].is_dir) {
                     int cnt = cpc_disk_enter_subdir(g_cpc_disk_entries[ei].name);
-                    s_disk_row = DISK_ENTRY_OFFSET; s_disk_scroll = 0;
+                    s_disk_row = DISK_DOTDOT_ROW; s_disk_scroll = 0;
                     snprintf(s_disk_msg, sizeof(s_disk_msg),
                              "%d item%s", cnt, cnt == 1 ? "" : "s");
                 } else {
@@ -461,9 +470,14 @@ static void render_disk_browser(uint8_t *fb, int stride) {
                 snprintf(item, sizeof(item), "[Eject: %s]", mounted);
             else
                 snprintf(item, sizeof(item), "[Eject]");
-            /* Dim the eject row when nothing is mounted */
             uint8_t efg = (mounted || sel) ? fg : UI_COLOR_DIM;
             ui_draw_string(fb, stride, x + 2, y + 1, item, efg);
+        } else if (i == DISK_DOTDOT_ROW) {
+            /* Always show ".." — dimmed when already at root */
+            bool at_root = (strcmp(g_cpc_disk_dir, "/cpc/disk") == 0
+                         || strcmp(g_cpc_disk_dir, "/") == 0);
+            uint8_t dfg = (!at_root || sel) ? fg : UI_COLOR_DIM;
+            ui_draw_string(fb, stride, x + 2, y + 1, "[..]", dfg);
         } else {
             int ei = i - DISK_ENTRY_OFFSET;
             char item[CPC_DISK_FILENAME_LEN + 8];
@@ -491,7 +505,7 @@ static void render_disk_browser(uint8_t *fb, int stride) {
         ui_draw_string(fb, stride, x, msg_y + 1, s_disk_msg, UI_COLOR_ACCENT);
     }
 
-    draw_footer(fb, stride, "UP/DN PG  ENTER  BKSP=up  ESC=back");
+    draw_footer(fb, stride, "UP/DN PG  ENTER=select  ESC=back");
 }
 
 /* ---- main render entry point ----------------------------------------- */
