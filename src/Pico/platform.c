@@ -53,13 +53,14 @@ static XImage g_dummy_image = {640, 400};
 XImage *myimage = &g_dummy_image;
 
 /* CPC hardware colors come from ColorRGBs/GreenRGBs in colors.c (6-bit, 0-63).
- * Scale to 8-bit for HDMI: cap at 200/255 (~78%) to match CPC monitor brightness.
- * Linear full-scale (val*255/63) produces colors too bright vs a real CPC CRT. */
+ * Scale linearly to 8-bit to match Caprice32/WinAPE PC emulator reference output.
+ * The CPC uses 3 DAC levels per channel: 0x00, 0x20 (medium ~50%), 0x3f (full). */
 extern long ColorRGBs[32][3];
 extern long GreenRGBs[32][3];
 
-/* Gamma ~2.0 approximation: darkens mid-tones to match CPC CRT appearance */
-static inline uint8_t scale6to8(long v) { return (uint8_t)(v * v * 255L / (63L * 63L)); }
+/* Linear 6-bit → 8-bit: maps CPC 3-level (0/32/63) to (0/129/255).
+ * Matches PC emulator output (Caprice32/WinAPE reference). */
+static inline uint8_t scale6to8(long v) { return (uint8_t)(v * 255L / 63L); }
 
 void cpc_init_palette(void) {
     for (int i = 0; i < 32; ++i) {
