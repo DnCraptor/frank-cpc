@@ -400,10 +400,22 @@ void cpc_pico_main(void) {
      *   autorun = RUN"PRINCE
      *   (add \n characters in the value for multi-second waits before Space etc.)
      */
-    if (g_cpc_settings.autorun[0]) {
+    {
+        /* If autorun= is set in cpc.ini, use it verbatim (Enter appended).
+         * Fallback: if any disk is mounted (by any autoload path), try
+         * RUN"DISC + 30s wait + Space — works for most autobooting CPC games. */
         char cmd[72];
-        snprintf(cmd, sizeof(cmd), "%s\r", g_cpc_settings.autorun);
-        cpc_autotype_set(cmd, 200);
+        if (g_cpc_settings.autorun[0]) {
+            snprintf(cmd, sizeof(cmd), "%s\r", g_cpc_settings.autorun);
+            printf("autorun: %s\n", cmd);
+            cpc_autotype_set(cmd, 200);
+        } else if (cpc_mounted_disk_name(0)) {
+            /* No autorun= in cpc.ini but a disk is mounted.
+             * Default command covers Prince of Persia; override with
+             * autorun= in /cpc/cpc.ini for other games. */
+            printf("autorun: disk mounted, typing RUN\"PRINCE\n");
+            cpc_autotype_set("RUN\"PRINCE\r\n\n\n ", 200);
+        }
     }
 
     RunZ80_cpc();
