@@ -242,7 +242,7 @@ void CPCKeyPress(unsigned int k) {
       case XK_F11          : ExitCPC = TRUE; break;
       case XK_F12          : ExitCPC = TRUE; break;
     }
-    Keyport[row] &= col;
+    if (row < 10) Keyport[row] &= col;
   }
 }
 
@@ -255,6 +255,13 @@ void CPCKeyRelease (unsigned int k) {
       Keyport[2] |= 32;
   }
   else {
+#ifdef PICO_BUILD
+    /* On PS/2, auto-repeat only sends make codes (no release during
+     * typematic), so the X11 LastReleasedKey guard is not needed.
+     * It caused "sticky keys" when the same key was released twice
+     * in succession (e.g. rapid arrow presses during gameplay). */
+    switch (k) {
+#else
     if (k == LastReleasedKey) {
       if (CtrlKeyPressed) {
         row = 2;
@@ -270,6 +277,7 @@ void CPCKeyRelease (unsigned int k) {
     }
     else {
       switch (k) {
+#endif
         case XK_BackSpace    : row=9; col=128; break;
         case XK_Return       : row=2; col=  4; break;
         case XK_Control_L    : row=2; col=128; CtrlKeyPressed = FALSE; break;
@@ -304,8 +312,10 @@ void CPCKeyRelease (unsigned int k) {
         case XK_KP_Insert    : row=9; col= 32; break;
         case XK_Escape       : row=8; col=  4; break;
       }
+#ifndef PICO_BUILD
     }
-    Keyport[row] |= col;
+#endif
+    if (row < 10) Keyport[row] |= col;
   }
   LastReleasedKey = k;
 }

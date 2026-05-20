@@ -67,11 +67,16 @@ word LoopZ80(register Z80 *R) {
    * Used at frame end to determine the correct display-time mode. */
   pico_record_period_state(IRQCount - 1);
 
+  /* Process keyboard at every interrupt period (6×/frame = 300Hz)
+   * for responsive input.  The direct matrix approach has no state
+   * coupling, so calling it frequently is safe and reduces latency. */
+  cpc_ps2_feed_events();
+
   /* One CPC video frame = 6 CRTC interrupt periods (300Hz/50fps = 6). */
   if (IRQCount == 6) {
     uint64_t t_frame_start = time_us_64();
 
-    cpc_ps2_feed_events();
+    cpc_autotype_tick();
 
     /* Palette update. */
     ChangeInk = FALSE;

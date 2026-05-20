@@ -302,12 +302,88 @@ static unsigned int scancode_to_keysym(unsigned int sc, bool shifted) {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Direct PS/2 scancode → CPC keyboard matrix mapping.                */
+/* Each entry is {row, bit}.  row>=10 means unmapped.                 */
+/* This bypasses the stateful keysym-based CPCKeyPress/Release,       */
+/* eliminating sticky-key bugs from shift-state coupling.             */
+/* ------------------------------------------------------------------ */
+#define CPC_MATRIX_SIZE 0x6D  /* one past highest mapped scancode */
+/* Row 0xFF = unmapped.  We must explicitly mark gaps so that
+ * zero-initialized {0,0} entries don't accidentally map to row 0 bit 0. */
+#define _U 0xFF
+static const uint8_t ps2_to_cpc_matrix[CPC_MATRIX_SIZE][2] = {
+    [0x00] = {_U, 0},  /* no scancode 0 */
+    [PSC_Escape]    = {8, 2},
+    [PSC_1] = {8, 0}, [PSC_2] = {8, 1}, [PSC_3] = {7, 1}, [PSC_4] = {7, 0},
+    [PSC_5] = {6, 1}, [PSC_6] = {6, 0}, [PSC_7] = {5, 1}, [PSC_8] = {5, 0},
+    [PSC_9] = {4, 1}, [PSC_0] = {4, 0},
+    [PSC_Minus]     = {3, 1},
+    [PSC_Equals]    = {3, 4},  /* = → CPC ;/+ key */
+    [PSC_BackSpace] = {9, 7},
+    [PSC_Tab]       = {8, 4},
+    [PSC_Q] = {8, 3}, [PSC_W] = {7, 3}, [PSC_E] = {7, 2}, [PSC_R] = {6, 2},
+    [PSC_T] = {6, 3}, [PSC_Y] = {5, 3}, [PSC_U] = {5, 2}, [PSC_I] = {4, 3},
+    [PSC_O] = {4, 2}, [PSC_P] = {3, 3},
+    [PSC_LBr]       = {2, 1},
+    [PSC_RBr]       = {2, 3},
+    [PSC_Return]    = {2, 2},
+    [PSC_LCtrl]     = {2, 7},
+    [PSC_A] = {8, 5}, [PSC_S] = {7, 4}, [PSC_D] = {7, 5}, [PSC_F] = {6, 5},
+    [PSC_G] = {6, 4}, [PSC_H] = {5, 4}, [PSC_J] = {5, 5}, [PSC_K] = {4, 5},
+    [PSC_L] = {4, 4},
+    [PSC_Semicolon] = {3, 5},
+    [PSC_Quote]     = {3, 2},  /* ' → CPC @ key */
+    [PSC_BackQuote] = {3, 0},  /* ` → CPC ^ key */
+    [PSC_LShift]    = {2, 5},
+    [PSC_BackSlash] = {2, 6},
+    [PSC_Z] = {8, 7}, [PSC_X] = {7, 7}, [PSC_C] = {7, 6}, [PSC_V] = {6, 7},
+    [PSC_B] = {6, 6}, [PSC_N] = {5, 6}, [PSC_M] = {4, 6},
+    [PSC_Comma]     = {4, 7},
+    [PSC_Period]    = {3, 7},
+    [PSC_Slash]     = {3, 6},
+    [PSC_RShift]    = {2, 5},
+    /* 0x37 = unmapped */ [0x37] = {_U, 0},
+    [PSC_LAlt]      = {1, 1},  /* Alt → CPC COPY key */
+    [PSC_Space]     = {5, 7},
+    [PSC_CapsLock]  = {8, 6},
+    /* F1-F12: handled via keysym interception, not matrix */
+    [PSC_F1] = {_U, 0}, [PSC_F2] = {_U, 0}, [PSC_F3] = {_U, 0},
+    [PSC_F4] = {_U, 0}, [PSC_F5] = {_U, 0}, [PSC_F6] = {_U, 0},
+    [PSC_F7] = {_U, 0}, [PSC_F8] = {_U, 0}, [PSC_F9] = {_U, 0},
+    [PSC_F10] = {_U, 0}, [PSC_F11] = {_U, 0}, [PSC_F12] = {_U, 0},
+    /* Gap 0x45-0x59 */
+    [0x45] = {_U, 0}, [0x46] = {_U, 0}, [0x47] = {_U, 0}, [0x48] = {_U, 0},
+    [0x49] = {_U, 0}, [0x4A] = {_U, 0}, [0x4B] = {_U, 0}, [0x4C] = {_U, 0},
+    [0x4D] = {_U, 0}, [0x4E] = {_U, 0}, [0x4F] = {_U, 0}, [0x50] = {_U, 0},
+    [0x51] = {_U, 0}, [0x52] = {_U, 0}, [0x53] = {_U, 0}, [0x54] = {_U, 0},
+    [0x55] = {_U, 0}, [0x56] = {_U, 0}, [0x59] = {_U, 0},
+    [PSC_Up]        = {0, 0},
+    [0x5B] = {_U, 0}, [0x5C] = {_U, 0}, [0x5D] = {_U, 0},
+    [PSC_Insert]    = {_U, 0},
+    [PSC_Delete]    = {2, 0},
+    [0x60] = {_U, 0},
+    [PSC_Home]      = {_U, 0},
+    [PSC_End]       = {_U, 0},
+    [PSC_PgUp]      = {_U, 0},
+    [PSC_PgDn]      = {_U, 0},
+    [PSC_RAlt]      = {1, 1},
+    [PSC_RCtrl]     = {2, 7},
+    [0x67] = {_U, 0},
+    [PSC_KP_Enter]  = {0, 6},
+    [0x69] = {_U, 0},
+    [PSC_Down]      = {0, 2},
+    [PSC_Left]      = {1, 0},
+    [PSC_Right]     = {0, 1},
+};
+#undef _U
+
 void cpc_ps2_feed_events(void) {
     static bool shifted = false;
     int pressed;
     unsigned char key;
 
-    cpc_autotype_tick();
+    /* Autotype only runs once per frame — called separately from LoopZ80. */
 
     ps2kbd_tick();
     while (ps2kbd_get_key(&pressed, &key)) {
@@ -316,7 +392,6 @@ void cpc_ps2_feed_events(void) {
 
         unsigned int ks = scancode_to_keysym((unsigned int)key,
                                              shifted && key != PSC_LShift && key != PSC_RShift);
-        if (!ks) continue;
 
         if (pressed) {
             /* F11: disk browser menu */
@@ -343,10 +418,24 @@ void cpc_ps2_feed_events(void) {
                 cpc_ui_handle_key(ks);
                 continue;
             }
-            CPCKeyPress(ks);
         } else {
             if (cpc_ui_is_visible()) continue;
-            CPCKeyRelease(ks);
+        }
+
+        /* Direct CPC keyboard matrix manipulation.
+         * Each PS/2 scancode maps to a fixed (row, bit) in the CPC's
+         * 10×8 Keyport matrix.  Press clears the bit, release sets it.
+         * This bypasses the stateful CPCKeyPress/Release functions,
+         * eliminating sticky-key bugs caused by shift-state coupling. */
+        if (key < CPC_MATRIX_SIZE) {
+            uint8_t row = ps2_to_cpc_matrix[key][0];
+            uint8_t bit = ps2_to_cpc_matrix[key][1];
+            if (row < 10) {
+                if (pressed)
+                    Keyport[row] &= ~(1u << bit);
+                else
+                    Keyport[row] |= (1u << bit);
+            }
         }
     }
 }

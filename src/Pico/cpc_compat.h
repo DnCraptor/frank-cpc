@@ -44,5 +44,6 @@ extern uint8_t cpc_fb[CPC_FB_HEIGHT][CPC_FB_WIDTH];
 
 void cpc_init_palette(void);
 void cpc_ps2_feed_events(void);
+void cpc_autotype_tick(void);
 void cpc_frame_sync(void);
 void cpc_frame_present(void);
