@@ -61,9 +61,21 @@ static uint8_t g_in_redraw = 0;
  * Used to determine the correct display-time mode for each screen region. */
 static uint8_t g_period_mode_snap[6];
 
+/* Per-period ink snapshots for palette splitting.
+ * The status bar uses a different palette than the game area. */
+static uint8_t g_period_ink[6][17];
+static uint8_t g_split_ink[17];       /* palette for status bar rows */
+static uint8_t g_prev_split_ink[17];  /* previous frame's split ink for change detection */
+static int g_has_split_ink = 0;
+static int g_split_ink_changed = 0;   /* set when split ink differs from previous frame */
+static int g_split_row = -1;          /* first fb row of status bar region */
+
 void pico_record_period_state(int period) {
-  if (period >= 0 && period < 6)
+  if (period >= 0 && period < 6) {
     g_period_mode_snap[period] = (uint8_t)ScreenMode;
+    for (int k = 0; k < 17; k++)
+      g_period_ink[period][k] = Ink[k];
+  }
 }
 
 /* Determine the dominant display mode (used for most of the screen). */
@@ -79,17 +91,34 @@ static uint8_t pico_dominant_mode(void) {
 
 /* Build a per-row display mode map.  The dominant mode covers the whole
  * screen, then if period 0 has a different mode (status bar), apply it
- * to the bottom 8 rows (CPC char row 24 → fb rows 192-199). */
+ * to the bottom 8 rows (CPC char row 24 → fb rows 192-199).
+ * Also compute the split palette from the alt-mode period's ink snapshot. */
 static void pico_build_display_modes(uint8_t *display_mode) {
   uint8_t dom = pico_dominant_mode();
   memset(display_mode, dom, CPC_FB_ROWS);
+
+  g_has_split_ink = 0;
+  g_split_row = -1;
 
   /* Check if period 0 uses a different mode (status bar split). */
   if (g_period_mode_snap[0] != dom && g_period_mode_snap[0] < 3) {
     int split_row = (384 + (int)LineOffset) >> 1;
     if (split_row >= CPC_FB_ROWS) split_row -= CPC_FB_ROWS;
+    g_split_row = split_row;
     for (int r = split_row; r < CPC_FB_ROWS; r++)
       display_mode[r] = g_period_mode_snap[0];
+
+    /* Use period 0's ink snapshot as the status bar palette.
+     * Track changes so we can force a redraw when the split palette
+     * changes (e.g. after a red flash effect). */
+    g_split_ink_changed = 0;
+    for (int k = 0; k < 17; k++) {
+      uint8_t new_ink = g_period_ink[0][k];
+      if (new_ink != g_split_ink[k]) g_split_ink_changed = 1;
+      g_prev_split_ink[k] = g_split_ink[k];
+      g_split_ink[k] = new_ink;
+    }
+    g_has_split_ink = 1;
   }
 }
 #endif
@@ -275,7 +304,8 @@ void WrScreenMem (register word Addr, register byte Value) {
 /** Render a single VRAM byte into cpc_fb[] using the         **/
 /** specified screen mode and current AktInk[].                **/
 /***************************************************************/
-static void pico_render_byte(word Addr, byte Value, unsigned int mode) {
+static void pico_render_byte(word Addr, byte Value, unsigned int mode,
+                             const uint8_t *ink) {
     int RowOffsAddr = ((Addr & 0x07FF) + 2048 - ScreenOffset) & 0x07FF;
     if (RowOffsAddr >= 2000) return;
     int scrAddr = (Addr & 0x3800) | RowOffsAddr;
@@ -293,22 +323,22 @@ static void pico_render_byte(word Addr, byte Value, unsigned int mode) {
       case 0:
         for (i = 0; i <= 1; i++) {
             switch ((Value << i) & 170) {
-                case   0: farbe = PixColor[AktInk[0]];  break;
-                case 128: farbe = PixColor[AktInk[1]];  break;
-                case   8: farbe = PixColor[AktInk[2]];  break;
-                case 136: farbe = PixColor[AktInk[3]];  break;
-                case  32: farbe = PixColor[AktInk[4]];  break;
-                case 160: farbe = PixColor[AktInk[5]];  break;
-                case  40: farbe = PixColor[AktInk[6]];  break;
-                case 168: farbe = PixColor[AktInk[7]];  break;
-                case   2: farbe = PixColor[AktInk[8]];  break;
-                case 130: farbe = PixColor[AktInk[9]];  break;
-                case  10: farbe = PixColor[AktInk[10]]; break;
-                case 138: farbe = PixColor[AktInk[11]]; break;
-                case  34: farbe = PixColor[AktInk[12]]; break;
-                case 162: farbe = PixColor[AktInk[13]]; break;
-                case  42: farbe = PixColor[AktInk[14]]; break;
-                default:  farbe = PixColor[AktInk[15]]; break;
+                case   0: farbe = PixColor[ink[0]];  break;
+                case 128: farbe = PixColor[ink[1]];  break;
+                case   8: farbe = PixColor[ink[2]];  break;
+                case 136: farbe = PixColor[ink[3]];  break;
+                case  32: farbe = PixColor[ink[4]];  break;
+                case 160: farbe = PixColor[ink[5]];  break;
+                case  40: farbe = PixColor[ink[6]];  break;
+                case 168: farbe = PixColor[ink[7]];  break;
+                case   2: farbe = PixColor[ink[8]];  break;
+                case 130: farbe = PixColor[ink[9]];  break;
+                case  10: farbe = PixColor[ink[10]]; break;
+                case 138: farbe = PixColor[ink[11]]; break;
+                case  34: farbe = PixColor[ink[12]]; break;
+                case 162: farbe = PixColor[ink[13]]; break;
+                case  42: farbe = PixColor[ink[14]]; break;
+                default:  farbe = PixColor[ink[15]]; break;
             }
             row[base + i*2]     = (uint8_t)farbe;
             row[base + i*2 + 1] = (uint8_t)farbe;
@@ -317,19 +347,19 @@ static void pico_render_byte(word Addr, byte Value, unsigned int mode) {
       case 1:
         for (i = 0; i <= 3; i++) {
             switch ((Value >> i) & 17) {
-                case  0: farbe = PixColor[AktInk[0]]; break;
-                case  1: farbe = PixColor[AktInk[2]]; break;
-                case 16: farbe = PixColor[AktInk[1]]; break;
-                default: farbe = PixColor[AktInk[3]]; break;
+                case  0: farbe = PixColor[ink[0]]; break;
+                case  1: farbe = PixColor[ink[2]]; break;
+                case 16: farbe = PixColor[ink[1]]; break;
+                default: farbe = PixColor[ink[3]]; break;
             }
             row[base + 3 - i] = (uint8_t)farbe;
         }
         break;
       case 2:
-        row[base + 0] = (Value & 0xC0) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
-        row[base + 1] = (Value & 0x30) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
-        row[base + 2] = (Value & 0x0C) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
-        row[base + 3] = (Value & 0x03) ? (uint8_t)PixColor[AktInk[1]] : (uint8_t)PixColor[AktInk[0]];
+        row[base + 0] = (Value & 0xC0) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
+        row[base + 1] = (Value & 0x30) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
+        row[base + 2] = (Value & 0x0C) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
+        row[base + 3] = (Value & 0x03) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
         break;
     }
 }
@@ -355,11 +385,12 @@ void RedrawScreenImage(void) {
       if (scrZ > 399) scrZ -= 400;
       int fb_r = scrZ >> 1;
       unsigned int mode = ((unsigned)fb_r < CPC_FB_ROWS) ? display_mode[fb_r] : ScreenMode;
+      const uint8_t *ink = (g_has_split_ink && fb_r > g_split_row) ? g_split_ink : AktInk;
 
       int s_base = C * 80;
       for (int s = s_base; s < s_base + 80; s++) {
         word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
-        pico_render_byte(Addr, RAM[Addr], mode);
+        pico_render_byte(Addr, RAM[Addr], mode, ink);
       }
     }
   }
@@ -429,12 +460,20 @@ void RedrawDirtyRows(void) {
   memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
   memset(g_dirty_rows, 0, CPC_FB_ROWS);
 
+  /* Build display modes first — this also detects split ink changes. */
+  static uint8_t display_mode[CPC_FB_ROWS];
+  pico_build_display_modes(display_mode);
+
+  /* If the split palette changed (e.g. after a red flash effect),
+   * promote to a full redraw so stale palette rows get refreshed. */
+  if (g_split_ink_changed) {
+    RedrawScreenImage();
+    return;
+  }
+
   int any = 0;
   for (int r = 0; r < CPC_FB_ROWS; r++) if (was_dirty[r]) { any = 1; break; }
   if (!any) return;
-
-  static uint8_t display_mode[CPC_FB_ROWS];
-  pico_build_display_modes(display_mode);
 
   for (int r = 0; r < CPC_FB_ROWS; r++)
     if (was_dirty[r]) memset(cpc_fb[r], 0, CPC_FB_WIDTH);
@@ -449,10 +488,11 @@ void RedrawDirtyRows(void) {
       if ((unsigned)fb_r >= CPC_FB_ROWS || !was_dirty[fb_r]) continue;
 
       unsigned int mode = display_mode[fb_r];
+      const uint8_t *ink = (g_has_split_ink && fb_r > g_split_row) ? g_split_ink : AktInk;
       int s_base = C * 80;
       for (int s = s_base; s < s_base + 80; s++) {
         word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
-        pico_render_byte(Addr, RAM[Addr], mode);
+        pico_render_byte(Addr, RAM[Addr], mode, ink);
       }
     }
   }
