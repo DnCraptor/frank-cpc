@@ -63,7 +63,8 @@ word LoopZ80(register Z80 *R) {
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
 
-  /* Record per-period Mode and Ink state for palette splitting. */
+  /* Record the current screen mode at each interrupt period boundary.
+   * Used at frame end to determine the correct display-time mode. */
   pico_record_period_state(IRQCount - 1);
 
   /* One CPC video frame = 6 CRTC interrupt periods (300Hz/50fps = 6). */
@@ -82,39 +83,23 @@ word LoopZ80(register Z80 *R) {
     AktInk[15] = Ink[15];
     if (Ink[16] != AktInk[16]) AktInk[16] = Ink[16];
 
-    if (ChangeInk) {
-      /* Palette changed this frame: update AktInk was already done above.
-       * Check if game is doing VSYNC blanking (all inks identical = game hides
-       * sprite updates behind a black palette).  Skip ALL rendering when blank
-       * so we never corrupt the display.  ChangeInk fires again when the real
-       * palette is restored → full redraw then. */
-    }
-
-    /* Detect palette blanking regardless of ChangeInk: the blanking may
-     * persist for multiple frames (ChangeInk=FALSE while inks stay all-same).
-     * We must never call RedrawDirtyRows with a blank palette either. */
+    /* Skip rendering when palette is "blank" (all inks identical = game
+     * hiding sprite updates behind a solid palette). */
     {
       int palette_blank = 1;
       for (i = 1; i <= 15; i++) {
         if (AktInk[i] != AktInk[0]) { palette_blank = 0; break; }
       }
-
       if (!palette_blank) {
-        /* Compute the split palette from per-period ink snapshots. */
-        pico_compute_split_palette();
+        uint64_t t0 = time_us_64();
         if (ChangeInk) {
-          uint64_t t0 = time_us_64();
           RedrawScreenImage();
-          uint32_t dt = (uint32_t)(time_us_64() - t0);
-          if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
-          hb_redraw_count++;
         } else {
-          uint64_t t0 = time_us_64();
           RedrawDirtyRows();
-          uint32_t dt = (uint32_t)(time_us_64() - t0);
-          if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
-          if (dt > 0) hb_redraw_count++;
         }
+        uint32_t dt = (uint32_t)(time_us_64() - t0);
+        if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
+        if (dt > 0) hb_redraw_count++;
       } else {
         hb_blank_count++;
       }
@@ -122,20 +107,6 @@ word LoopZ80(register Z80 *R) {
     ChangeInk = FALSE;
     cpc_frame_present();
     IRQCount = 0;
-
-    /* Periodically reset per-row mode flags so anchors can re-emerge
-     * after screen transitions.  We need multiple frames of accumulation
-     * (single-frame data is too noisy — game-area rows written only during
-     * the ISR Mode 1 window appear as false anchors).  Reset every 8
-     * frames (~160 ms at 50 fps) is long enough for all game-area rows to
-     * receive Mode 0 writes, clearing false anchors. */
-    {
-      static unsigned int flag_reset_ctr = 0;
-      if (++flag_reset_ctr >= 8) {
-        flag_reset_ctr = 0;
-        pico_reset_row_mode_flags();
-      }
-    }
 
     mix_notes(AYRegister);
 
