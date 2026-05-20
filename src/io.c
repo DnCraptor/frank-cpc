@@ -99,7 +99,7 @@ void OutZ80 (register word Port, register byte Value) {
   /* 0xBDxx: Register data of HD6845 */
   if ((Port & 0x4300)==0x0100) {
     HD6845Register [HD6845RegisterPointer] = Value;
-    if (HD6845RegisterPointer==13) {
+    if (HD6845RegisterPointer==12 || HD6845RegisterPointer==13) {
       ScreenAddr = (HD6845Register[12]<<8) + HD6845Register[13];
       ScreenOffset = (ScreenAddr & 1023)<<1;
       LineOffset= (((ScreenAddr & 1023)/40)<<4);
@@ -110,6 +110,9 @@ void OutZ80 (register word Port, register byte Value) {
       else
         RedrawLastLine ();
     }
+    /* Force a full redraw when the display layout changes (overscan). */
+    if (HD6845RegisterPointer == 1 || HD6845RegisterPointer == 6)
+      ChangeInk = TRUE;
     AlterScrOffs = ScreenOffset;
     ok = TRUE;
   }

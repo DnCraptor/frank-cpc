@@ -363,6 +363,67 @@ static void pico_render_byte(word Addr, byte Value, unsigned int mode,
         break;
     }
 }
+
+/***************************************************************/
+/** Render a VRAM byte at explicit framebuffer coordinates,    **/
+/** bypassing PixelPosition[].  Used for CRTC overscan modes   **/
+/** where the VRAM-to-screen mapping differs from the standard **/
+/** 40-char, 25-row layout.                                    **/
+/***************************************************************/
+static void pico_render_byte_at(byte Value, unsigned int mode,
+                                const uint8_t *ink, int fb_x, int fb_y) {
+    if ((unsigned)fb_y >= CPC_FB_ROWS || (unsigned)fb_x > CPC_FB_WIDTH - 4)
+        return;
+
+    uint8_t * const row = cpc_fb[fb_y];
+    const int base = fb_x;
+    int i;
+    uint8_t farbe;
+
+    switch (mode) {
+      case 0:
+        for (i = 0; i <= 1; i++) {
+            switch ((Value << i) & 170) {
+                case   0: farbe = (uint8_t)PixColor[ink[0]];  break;
+                case 128: farbe = (uint8_t)PixColor[ink[1]];  break;
+                case   8: farbe = (uint8_t)PixColor[ink[2]];  break;
+                case 136: farbe = (uint8_t)PixColor[ink[3]];  break;
+                case  32: farbe = (uint8_t)PixColor[ink[4]];  break;
+                case 160: farbe = (uint8_t)PixColor[ink[5]];  break;
+                case  40: farbe = (uint8_t)PixColor[ink[6]];  break;
+                case 168: farbe = (uint8_t)PixColor[ink[7]];  break;
+                case   2: farbe = (uint8_t)PixColor[ink[8]];  break;
+                case 130: farbe = (uint8_t)PixColor[ink[9]];  break;
+                case  10: farbe = (uint8_t)PixColor[ink[10]]; break;
+                case 138: farbe = (uint8_t)PixColor[ink[11]]; break;
+                case  34: farbe = (uint8_t)PixColor[ink[12]]; break;
+                case 162: farbe = (uint8_t)PixColor[ink[13]]; break;
+                case  42: farbe = (uint8_t)PixColor[ink[14]]; break;
+                default:  farbe = (uint8_t)PixColor[ink[15]]; break;
+            }
+            row[base + i*2]     = farbe;
+            row[base + i*2 + 1] = farbe;
+        }
+        break;
+      case 1:
+        for (i = 0; i <= 3; i++) {
+            switch ((Value >> i) & 17) {
+                case  0: farbe = (uint8_t)PixColor[ink[0]]; break;
+                case  1: farbe = (uint8_t)PixColor[ink[2]]; break;
+                case 16: farbe = (uint8_t)PixColor[ink[1]]; break;
+                default: farbe = (uint8_t)PixColor[ink[3]]; break;
+            }
+            row[base + 3 - i] = farbe;
+        }
+        break;
+      case 2:
+        row[base + 0] = (Value & 0xC0) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
+        row[base + 1] = (Value & 0x30) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
+        row[base + 2] = (Value & 0x0C) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
+        row[base + 3] = (Value & 0x03) ? (uint8_t)PixColor[ink[1]] : (uint8_t)PixColor[ink[0]];
+        break;
+    }
+}
 #endif
 /** After any color change, the screen image must   **/
 /** be redrawed completely.                         **/
@@ -378,19 +439,65 @@ void RedrawScreenImage(void) {
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   g_in_redraw = 1;
-  for (int bank = 0; bank < 8; bank++) {
-    int z = bank << 11;
-    for (int C = 0; C < 25; C++) {
-      int scrZ = bank * 2 + C * 16 + (int)LineOffset;
-      if (scrZ > 399) scrZ -= 400;
-      int fb_r = scrZ >> 1;
-      unsigned int mode = ((unsigned)fb_r < CPC_FB_ROWS) ? display_mode[fb_r] : ScreenMode;
-      const uint8_t *ink = (g_has_split_ink && fb_r > g_split_row) ? g_split_ink : AktInk;
 
-      int s_base = C * 80;
-      for (int s = s_base; s < s_base + 80; s++) {
-        word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
-        pico_render_byte(Addr, RAM[Addr], mode, ink);
+  /* Use CRTC registers to determine the display layout.
+   * Standard CPC: reg1=40 chars/row, reg6=25 rows.
+   * Overscan games set wider/taller values (e.g. 48×34). */
+  int chars_per_row = HD6845Register[1] ? HD6845Register[1] : 40;
+  int rows_displayed = HD6845Register[6] ? HD6845Register[6] : 25;
+
+  if (chars_per_row != 40 || rows_displayed != 25) {
+    /* ---- Overscan rendering path ----
+     * The CRTC MA counter advances by chars_per_row per character row,
+     * not by the standard 40.  This changes the VRAM-to-screen mapping.
+     * We iterate through the CRTC display list and render to explicit
+     * framebuffer coordinates, centering/clipping to fit 320×200. */
+    int bytes_per_row = chars_per_row * 2;
+    int display_chars = (chars_per_row > 40) ? 40 : chars_per_row;
+    int skip_chars_left = (chars_per_row > 40) ? (chars_per_row - 40) / 2 : 0;
+    int skip_bytes_left = skip_chars_left * 2;
+    int fb_x_offset = (chars_per_row < 40) ? ((40 - chars_per_row) / 2) * 8 : 0;
+    int display_rows = (rows_displayed > 25) ? 25 : rows_displayed;
+    int skip_rows_top = (rows_displayed > 25) ? (rows_displayed - 25) / 2 : 0;
+
+    for (int bank = 0; bank < 8; bank++) {
+      for (int row = 0; row < display_rows; row++) {
+        int crtc_row = row + skip_rows_top;
+        int fb_y_400 = bank * 2 + row * 16 + (int)LineOffset;
+        if (fb_y_400 > 399) fb_y_400 -= 400;
+        int fb_r = fb_y_400 >> 1;
+        if ((unsigned)fb_r >= CPC_FB_ROWS) continue;
+
+        unsigned int mode = display_mode[fb_r];
+        const uint8_t *ink = (g_has_split_ink && fb_r > g_split_row)
+                             ? g_split_ink : AktInk;
+
+        for (int b = 0; b < display_chars * 2; b++) {
+          int row_byte = b + skip_bytes_left;
+          int s = (crtc_row * bytes_per_row + row_byte) & 0x7FF;
+          word Addr = (word)(ScreenBlock +
+                     ((ScreenOffset + (bank << 11) + s) & 0x3FFF));
+          int fb_x = fb_x_offset + b * 4;
+          pico_render_byte_at(RAM[Addr], mode, ink, fb_x, fb_r);
+        }
+      }
+    }
+  } else {
+    /* ---- Standard 40×25 rendering path ---- */
+    for (int bank = 0; bank < 8; bank++) {
+      int z = bank << 11;
+      for (int C = 0; C < 25; C++) {
+        int scrZ = bank * 2 + C * 16 + (int)LineOffset;
+        if (scrZ > 399) scrZ -= 400;
+        int fb_r = scrZ >> 1;
+        unsigned int mode = ((unsigned)fb_r < CPC_FB_ROWS) ? display_mode[fb_r] : ScreenMode;
+        const uint8_t *ink = (g_has_split_ink && fb_r > g_split_row) ? g_split_ink : AktInk;
+
+        int s_base = C * 80;
+        for (int s = s_base; s < s_base + 80; s++) {
+          word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
+          pico_render_byte(Addr, RAM[Addr], mode, ink);
+        }
       }
     }
   }
@@ -456,6 +563,19 @@ void RedrawFirstLine (void) {
 /** using display-time modes from period snapshots.            **/
 /***************************************************************/
 void RedrawDirtyRows(void) {
+  /* For overscan modes, dirty row tracking uses the standard PixelPosition
+   * mapping which gives wrong positions.  Fall back to full redraw. */
+  int chars_per_row = HD6845Register[1] ? HD6845Register[1] : 40;
+  int rows_displayed = HD6845Register[6] ? HD6845Register[6] : 25;
+  if (chars_per_row != 40 || rows_displayed != 25) {
+    /* Check if any rows were dirtied. */
+    int any = 0;
+    for (int r = 0; r < CPC_FB_ROWS; r++) if (g_dirty_rows[r]) { any = 1; break; }
+    memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+    if (any) RedrawScreenImage();
+    return;
+  }
+
   static uint8_t was_dirty[CPC_FB_ROWS];
   memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
   memset(g_dirty_rows, 0, CPC_FB_ROWS);
