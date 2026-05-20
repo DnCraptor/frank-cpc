@@ -36,6 +36,9 @@ typedef struct {
     uint8_t monitor;  /* 0=Color, 1=Green               */
     uint8_t customer; /* 0..7 index (Amstrad..Orion)    */
     uint8_t rom_idx;  /* index into g_cpc_rom_list      */
+    char    autorun[64]; /* command to auto-type on boot, e.g. RUN"PRINCE */
+    char    disk_a[128]; /* full path to disk image for drive A on boot   */
+    char    disk_b[128]; /* full path to disk image for drive B on boot   */
 } cpc_settings_t;
 
 extern cpc_settings_t g_cpc_settings;

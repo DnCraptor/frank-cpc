@@ -6,6 +6,7 @@
  */
 
 #include "cpc_loader.h"
+#include "cpc_settings.h"
 #include "dialogs.h"
 #include "disc.h"
 #include "ff.h"
@@ -155,11 +156,44 @@ const char *cpc_mounted_disk_name(int drv) {
 
 void cpc_disk_autoload(void) {
     FILINFO fi;
+
+    /* Priority 1: explicit paths from settings (disk_a / disk_b). */
+    if (g_cpc_settings.disk_a[0]) {
+        printf("cpc_loader: autoloading drive A (settings): %s\n", g_cpc_settings.disk_a);
+        cpc_mount_disk(0, g_cpc_settings.disk_a);
+    }
+    if (g_cpc_settings.disk_b[0]) {
+        printf("cpc_loader: autoloading drive B (settings): %s\n", g_cpc_settings.disk_b);
+        cpc_mount_disk(1, g_cpc_settings.disk_b);
+    }
+
+    /* Priority 2: well-known fixed names. */
     const char *paths[2] = { "/cpc/disk/drivea.dsk", "/cpc/disk/driveb.dsk" };
     for (int d = 0; d < 2; ++d) {
+        if (g_mounted_path[d][0]) continue; /* already mounted via settings */
         if (f_stat(paths[d], &fi) == FR_OK) {
             printf("cpc_loader: autoloading drive %c: %s\n", 'A' + d, paths[d]);
             cpc_mount_disk(d, paths[d]);
+        }
+    }
+
+    /* Priority 3: if drive A still empty and there is exactly one .dsk in the
+     * disk directory, auto-mount it — convenient for single-game setups. */
+    if (!g_mounted_path[0][0]) {
+        cpc_disk_rescan();
+        int dsk_count = 0;
+        int dsk_idx   = -1;
+        for (int i = 0; i < g_cpc_disk_entry_count; ++i) {
+            if (!g_cpc_disk_entries[i].is_dir) {
+                dsk_count++;
+                dsk_idx = i;
+            }
+        }
+        if (dsk_count == 1) {
+            char path[CPC_DISK_PATH_LEN];
+            cpc_disk_entry_path(dsk_idx, path, sizeof(path));
+            printf("cpc_loader: single disk found, autoloading drive A: %s\n", path);
+            cpc_mount_disk(0, path);
         }
     }
 }

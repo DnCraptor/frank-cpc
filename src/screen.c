@@ -28,9 +28,12 @@
  * ghost-free rendering without the cost of a full 16 K redraw every frame. */
 #define CPC_FB_ROWS 200
 static uint8_t g_dirty_rows[CPC_FB_ROWS];
-static uint8_t g_dirty_mode[CPC_FB_ROWS]; /* ScreenMode active when each row was dirtied */
-static uint8_t g_dirty_ink[CPC_FB_ROWS][17]; /* AktInk[0..16] snapshot when row was first dirtied */
-static uint8_t g_in_redraw = 0;   /* suppresses re-marking during redraw loop */
+/* Persistent per-row screen mode.  Updated on every WrScreenMem call so that
+ * both the ChangeInk full-redraw and the dirty-row partial-redraw always use
+ * the correct mode for each row, even when the game switches between Mode 0
+ * (status bar) and Mode 1 (game area) within the same frame. */
+static uint8_t g_row_mode[CPC_FB_ROWS];
+static uint8_t g_in_redraw = 0;   /* suppresses dirty-row marking during redraw */
 
 #endif
 #include "cpc.h"
@@ -73,6 +76,11 @@ void InitScreen (void) {
    ScreenBlock = 0xC000;
    ScreenMode = 1;
    ChangeInk=FALSE;
+#ifdef PICO_BUILD
+   /* Pre-populate with Mode 1 so the first ChangeInk full-redraw uses the
+    * correct mode before the game has written any rows. */
+   memset(g_row_mode, 1, sizeof(g_row_mode));
+#endif
 }
 
 /******************************************************************/
@@ -111,17 +119,16 @@ void WrScreenMem (register word Addr, register byte Value) {
     if (scrZeile>399) scrZeile-=400;
 
 #ifdef PICO_BUILD
-    if (!g_in_redraw) {
+    {
         int fb_r = scrZeile >> 1;
         if ((unsigned)fb_r < CPC_FB_ROWS) {
-            if (!g_dirty_rows[fb_r]) {
-                /* First write to this row this frame: snapshot the current
-                 * screen mode and ink palette so RedrawDirtyRows can replay
-                 * the row with the correct rendering context. */
-                g_dirty_mode[fb_r] = (uint8_t)ScreenMode;
-                memcpy(g_dirty_ink[fb_r], AktInk, 17);
-            }
-            g_dirty_rows[fb_r] = 1;
+            /* Always keep the persistent per-row mode up to date so that
+             * both RedrawDirtyRows and RedrawScreenImage can replay the row
+             * with the correct mode (game may switch between Mode 0 / Mode 1
+             * for different screen regions within the same frame). */
+            g_row_mode[fb_r] = (uint8_t)ScreenMode;
+            if (!g_in_redraw)
+                g_dirty_rows[fb_r] = 1;
         }
     }
 #else
@@ -306,13 +313,34 @@ void WrScreenMem (register word Addr, register byte Value) {
 /*****************************************************/
 
 void RedrawScreenImage(void) {
-  static word Addr, z, s;
 #ifdef PICO_BUILD
+  /* Re-render every row using the persistent per-row screen mode so that
+   * rows rendered in Mode 0 (status bar) are not incorrectly re-rendered
+   * in Mode 1 (game area) or vice versa.  AktInk has already been updated
+   * to the new palette by the caller, which is what we want here. */
+  unsigned int saved_mode = ScreenMode;
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
-  memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
-  memset(g_dirty_ink,  0, sizeof(g_dirty_ink));
-#endif
+  g_in_redraw = 1;
+  for (int bank = 0; bank < 8; bank++) {
+    int z = bank << 11;
+    for (int C = 0; C < 25; C++) {
+      int scrZ = bank * 2 + C * 16 + (int)LineOffset;
+      if (scrZ > 399) scrZ -= 400;
+      int fb_r = scrZ >> 1;
+      if ((unsigned)fb_r < CPC_FB_ROWS)
+        ScreenMode = g_row_mode[fb_r];
+      int s_base = C * 80;
+      for (int s = s_base; s < s_base + 80; s++) {
+        word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
+        WrScreenMem(Addr, RAM[Addr]);
+      }
+    }
+  }
+  ScreenMode = saved_mode;
+  g_in_redraw = 0;
+#else
+  static word Addr, z, s;
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
     for (s=0; s<2000; s++) {
@@ -320,6 +348,7 @@ void RedrawScreenImage(void) {
       WrScreenMem (Addr, RAM[Addr]);
     }
   g_in_redraw = 0;
+#endif
 }
 
 
@@ -330,21 +359,18 @@ void RedrawScreenImage(void) {
 /***************************************************************/
 
 void RedrawLastLine (void) {
-  static word Addr, z, s;
 #ifdef PICO_BUILD
-  memset(cpc_fb, 0, sizeof(cpc_fb));
-  memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
-  memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
-  memset(g_dirty_ink,  0, sizeof(g_dirty_ink));
-#endif
+  RedrawScreenImage();
+#else
+  static word Addr, z, s;
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
     for (s=0; s<2000; s++) {
-    //for (s=1920; s<2000; s++) {
       Addr = ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF);
       WrScreenMem (Addr, RAM[Addr]);
     }
   g_in_redraw = 0;
+#endif
 }
 
 
@@ -354,42 +380,33 @@ void RedrawLastLine (void) {
 /****************************************************************/
 
 void RedrawFirstLine (void) {
-  static word Addr, z, s;
 #ifdef PICO_BUILD
-  memset(cpc_fb, 0, sizeof(cpc_fb));
-  memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
-  memset(g_dirty_mode, 0, sizeof(g_dirty_mode));
-  memset(g_dirty_ink,  0, sizeof(g_dirty_ink));
-#endif
+  RedrawScreenImage();
+#else
+  static word Addr, z, s;
   g_in_redraw = 1;
   for (z=0; z<16384 ;z+=2048)
     for (s=0; s<2000; s++) {
-    //for (s=0; s<80; s++) {
       Addr = ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF);
       WrScreenMem (Addr, RAM[Addr]);
     }
   g_in_redraw = 0;
+#endif
 }
 
 #ifdef PICO_BUILD
 /***************************************************************/
 /** Redraw only the rows that were touched by WrScreenMem     **/
 /** this frame.  Each dirty row is cleared in cpc_fb then     **/
-/** re-rendered from current video RAM.  Non-dirty rows are   **/
-/** left untouched.  Typically ~20 rows for a sprite game,    **/
-/** vs 200 for a full RedrawScreenImage() — ~10× faster.      **/
+/** re-rendered from current video RAM using the persistent   **/
+/** per-row g_row_mode so mode switches (Mode 0 status bar /  **/
+/** Mode 1 game area) are correctly replayed.                 **/
 /***************************************************************/
 void RedrawDirtyRows(void) {
-  /* Snapshot dirty flags, modes and inks, then clear. g_in_redraw prevents
-   * re-marking during the redraw loop so the snapshot stays clean.
-   * All snapshot arrays are static to avoid large stack allocations on
-   * the RP2350 (was_ink alone would be 200×17 = 3.4 KB on the stack). */
+  /* Snapshot and clear dirty flags. g_in_redraw prevents re-marking during
+   * the redraw loop so the snapshot stays clean. */
   static uint8_t was_dirty[CPC_FB_ROWS];
-  static uint8_t was_mode[CPC_FB_ROWS];
-  static uint8_t was_ink[CPC_FB_ROWS][17];
   memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
-  memcpy(was_mode,  g_dirty_mode, CPC_FB_ROWS);
-  memcpy(was_ink,   g_dirty_ink,  sizeof(g_dirty_ink));
   memset(g_dirty_rows, 0, CPC_FB_ROWS);
 
   /* Quick exit if nothing changed this frame. */
@@ -401,29 +418,21 @@ void RedrawDirtyRows(void) {
   for (int r = 0; r < CPC_FB_ROWS; r++)
     if (was_dirty[r]) memset(cpc_fb[r], 0, CPC_FB_WIDTH);
 
-  /* Re-render dirty rows using the ScreenMode AND AktInk[] that were active
-   * when each row was originally written.  Games like Prince of Persia switch
-   * between Mode 0 (status bar, 16 inks) and Mode 1 (game area, 4 inks)
-   * within the same frame; using end-of-frame state would corrupt rows that
-   * were rendered in a different mode/palette. */
+  /* Re-render dirty rows.  ChangeInk is FALSE here so AktInk is already the
+   * final palette for the frame.  Use g_row_mode[fb_r] so each row is
+   * rendered in the correct screen mode (Mode 0 / Mode 1 / Mode 2). */
   unsigned int saved_mode = ScreenMode;
-  uint8_t saved_ink[17];
-  memcpy(saved_ink, AktInk, 17);
-
   g_in_redraw = 1;
   for (int bank = 0; bank < 8; bank++) {
-    int z = bank << 11;   /* 0, 0x800, 0x1000, ... 0x3800 */
+    int z = bank << 11;
     for (int C = 0; C < 25; C++) {
       int scrZ = bank * 2 + C * 16 + (int)LineOffset;
       if (scrZ > 399) scrZ -= 400;
       int fb_r = scrZ >> 1;
       if ((unsigned)fb_r >= CPC_FB_ROWS || !was_dirty[fb_r]) continue;
 
-      /* Restore the mode and ink palette active when this row was first written. */
-      ScreenMode = was_mode[fb_r];
-      memcpy(AktInk, was_ink[fb_r], 17);
+      ScreenMode = g_row_mode[fb_r];
 
-      /* This char-row group is dirty — render all 80 bytes. */
       int s_base = C * 80;
       for (int s = s_base; s < s_base + 80; s++) {
         word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
@@ -432,7 +441,6 @@ void RedrawDirtyRows(void) {
     }
   }
   ScreenMode = saved_mode;
-  memcpy(AktInk, saved_ink, 17);
   g_in_redraw = 0;
 }
 #endif

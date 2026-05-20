@@ -253,6 +253,23 @@ bool cpc_settings_load(void) {
         char *key = line, *val = eq + 1;
         ini_trim(key); ini_trim(val);
 
+        /* autorun — freeform string, stored verbatim */
+        if (strcmp(key, "autorun") == 0) {
+            strncpy(g_cpc_settings.autorun, val, sizeof(g_cpc_settings.autorun) - 1);
+            g_cpc_settings.autorun[sizeof(g_cpc_settings.autorun) - 1] = 0;
+            continue;
+        }
+
+        /* disk_a / disk_b — full path or filename relative to /cpc/disk/ */
+        if (strcmp(key, "disk_a") == 0 || strcmp(key, "disk_b") == 0) {
+            char *dst = (key[5] == 'a') ? g_cpc_settings.disk_a : g_cpc_settings.disk_b;
+            size_t dsz = sizeof(g_cpc_settings.disk_a);
+            /* If no leading '/', prepend /cpc/disk/ */
+            if (val[0] != '/') snprintf(dst, dsz, "/cpc/disk/%s", val);
+            else                strncpy(dst, val, dsz - 1), dst[dsz - 1] = 0;
+            continue;
+        }
+
         /* Numeric fields */
         for (int i = 0; i < INI_FIELD_COUNT; ++i) {
             if (strcmp(key, INI_FIELDS[i].key) == 0) {

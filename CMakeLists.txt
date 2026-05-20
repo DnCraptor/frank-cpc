@@ -103,6 +103,7 @@ set(PICO_PORT
     src/Pico/cpc_settings.c
     src/Pico/cpc_loader.c
     src/Pico/cpc_ui.c
+    src/Pico/cpc_autotype.c
     src/Pico/ui_draw.c
     src/Pico/ui_font.c
 )

@@ -79,12 +79,23 @@ word LoopZ80(register Z80 *R) {
     if (Ink[16] != AktInk[16]) AktInk[16] = Ink[16];
 
     if (ChangeInk) {
-      /* Palette changed — all pixels need recoloring, full redraw. */
-      uint64_t t0 = time_us_64();
-      RedrawScreenImage();
-      uint32_t dt = (uint32_t)(time_us_64() - t0);
-      if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
-      hb_redraw_count++;
+      /* Palette changed — all pixels need recoloring, full redraw.
+       * Exception: if all 16 inks are the same value the game is doing
+       * VSYNC blanking (setting all inks to black to hide sprite updates).
+       * Rendering with a blank palette would corrupt the display, so skip
+       * the redraw and keep the previous frame on screen.  ChangeInk will
+       * fire again when the real palette is restored → full redraw then. */
+      int palette_blank = 1;
+      for (i = 1; i <= 15; i++) {
+        if (AktInk[i] != AktInk[0]) { palette_blank = 0; break; }
+      }
+      if (!palette_blank) {
+        uint64_t t0 = time_us_64();
+        RedrawScreenImage();
+        uint32_t dt = (uint32_t)(time_us_64() - t0);
+        if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
+        hb_redraw_count++;
+      }
     } else {
       /* Redraw only the rows that WrScreenMem dirtied this frame.
        * This clears each dirty row and re-renders it from current RAM,

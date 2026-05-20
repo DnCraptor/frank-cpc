@@ -27,6 +27,7 @@
 #include "cpc_settings.h"
 #include "cpc_ui.h"
 #include "cpc_loader.h"
+#include "cpc_autotype.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -306,6 +307,8 @@ void cpc_ps2_feed_events(void) {
     int pressed;
     unsigned char key;
 
+    cpc_autotype_tick();
+
     ps2kbd_tick();
     while (ps2kbd_get_key(&pressed, &key)) {
         if (key == PSC_LShift || key == PSC_RShift)
@@ -389,6 +392,20 @@ void cpc_pico_main(void) {
     cpu.Trace = 0;
 
     printf("CPC initialized. Starting emulation...\n");
+
+    /* Arm auto-type if configured via autorun= in /cpc/cpc.ini.
+     * \n in the string = 10-second pause (wait for disk load / title screen).
+     * Boot delay of 200 frames = 4 s gives BASIC time to show the Ready prompt.
+     * Example cpc.ini entries:
+     *   autorun = RUN"PRINCE
+     *   (add \n characters in the value for multi-second waits before Space etc.)
+     */
+    if (g_cpc_settings.autorun[0]) {
+        char cmd[72];
+        snprintf(cmd, sizeof(cmd), "%s\r", g_cpc_settings.autorun);
+        cpc_autotype_set(cmd, 200);
+    }
+
     RunZ80_cpc();
 
     while (true) tight_loop_contents();
