@@ -57,10 +57,14 @@ word LoopZ80(register Z80 *R) {
   static uint32_t hb_max_work_us = 0;
   static uint32_t hb_max_redraw_us = 0;
   static uint32_t hb_redraw_count = 0;
+  static uint32_t hb_blank_count = 0;
   extern uint32_t g_frame_skips;
   (void)R;
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
+
+  /* Record per-period Mode and Ink state for palette splitting. */
+  pico_record_period_state(IRQCount - 1);
 
   /* One CPC video frame = 6 CRTC interrupt periods (300Hz/50fps = 6). */
   if (IRQCount == 6) {
@@ -79,36 +83,59 @@ word LoopZ80(register Z80 *R) {
     if (Ink[16] != AktInk[16]) AktInk[16] = Ink[16];
 
     if (ChangeInk) {
-      /* Palette changed — all pixels need recoloring, full redraw.
-       * Exception: if all 16 inks are the same value the game is doing
-       * VSYNC blanking (setting all inks to black to hide sprite updates).
-       * Rendering with a blank palette would corrupt the display, so skip
-       * the redraw and keep the previous frame on screen.  ChangeInk will
-       * fire again when the real palette is restored → full redraw then. */
+      /* Palette changed this frame: update AktInk was already done above.
+       * Check if game is doing VSYNC blanking (all inks identical = game hides
+       * sprite updates behind a black palette).  Skip ALL rendering when blank
+       * so we never corrupt the display.  ChangeInk fires again when the real
+       * palette is restored → full redraw then. */
+    }
+
+    /* Detect palette blanking regardless of ChangeInk: the blanking may
+     * persist for multiple frames (ChangeInk=FALSE while inks stay all-same).
+     * We must never call RedrawDirtyRows with a blank palette either. */
+    {
       int palette_blank = 1;
       for (i = 1; i <= 15; i++) {
         if (AktInk[i] != AktInk[0]) { palette_blank = 0; break; }
       }
+
       if (!palette_blank) {
-        uint64_t t0 = time_us_64();
-        RedrawScreenImage();
-        uint32_t dt = (uint32_t)(time_us_64() - t0);
-        if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
-        hb_redraw_count++;
+        /* Compute the split palette from per-period ink snapshots. */
+        pico_compute_split_palette();
+        if (ChangeInk) {
+          uint64_t t0 = time_us_64();
+          RedrawScreenImage();
+          uint32_t dt = (uint32_t)(time_us_64() - t0);
+          if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
+          hb_redraw_count++;
+        } else {
+          uint64_t t0 = time_us_64();
+          RedrawDirtyRows();
+          uint32_t dt = (uint32_t)(time_us_64() - t0);
+          if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
+          if (dt > 0) hb_redraw_count++;
+        }
+      } else {
+        hb_blank_count++;
       }
-    } else {
-      /* Redraw only the rows that WrScreenMem dirtied this frame.
-       * This clears each dirty row and re-renders it from current RAM,
-       * guaranteeing no ghost pixels regardless of ScreenOffset changes. */
-      uint64_t t0 = time_us_64();
-      RedrawDirtyRows();
-      uint32_t dt = (uint32_t)(time_us_64() - t0);
-      if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
-      if (dt > 0) hb_redraw_count++;
     }
     ChangeInk = FALSE;
     cpc_frame_present();
     IRQCount = 0;
+
+    /* Periodically reset per-row mode flags so anchors can re-emerge
+     * after screen transitions.  We need multiple frames of accumulation
+     * (single-frame data is too noisy — game-area rows written only during
+     * the ISR Mode 1 window appear as false anchors).  Reset every 8
+     * frames (~160 ms at 50 fps) is long enough for all game-area rows to
+     * receive Mode 0 writes, clearing false anchors. */
+    {
+      static unsigned int flag_reset_ctr = 0;
+      if (++flag_reset_ctr >= 8) {
+        flag_reset_ctr = 0;
+        pico_reset_row_mode_flags();
+      }
+    }
 
     mix_notes(AYRegister);
 
@@ -126,16 +153,18 @@ word LoopZ80(register Z80 *R) {
     uint64_t now_us = time_us_64();
     if (hb_last_us == 0) hb_last_us = now_us;
     if (now_us - hb_last_us >= 1000000u) {
-      printf("[HB] fps=%lu  work_max=%lums  redraw=%lums(n=%lu)  skips=%lu\n",
+      printf("[HB] fps=%lu  work_max=%lums  redraw=%lums(n=%lu)  skips=%lu  blank=%lu\n",
              (unsigned long)hb_frames,
              (unsigned long)(hb_max_work_us / 1000u),
              (unsigned long)(hb_max_redraw_us / 1000u),
              (unsigned long)hb_redraw_count,
-             (unsigned long)new_skips);
+             (unsigned long)new_skips,
+             (unsigned long)hb_blank_count);
       hb_frames        = 0;
       hb_max_work_us   = 0;
       hb_max_redraw_us = 0;
       hb_redraw_count  = 0;
+      hb_blank_count   = 0;
       hb_last_us       = now_us;
     }
 

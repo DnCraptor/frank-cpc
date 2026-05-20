@@ -28,10 +28,10 @@
  * ghost-free rendering without the cost of a full 16 K redraw every frame. */
 #define CPC_FB_ROWS 200
 static uint8_t g_dirty_rows[CPC_FB_ROWS];
-/* Persistent per-row screen mode.  Updated on every WrScreenMem call so that
- * both the ChangeInk full-redraw and the dirty-row partial-redraw always use
- * the correct mode for each row, even when the game switches between Mode 0
- * (status bar) and Mode 1 (game area) within the same frame. */
+/* Persistent row-mode hints.  Z80 writes can happen while a game is briefly
+ * changing the Gate Array mode inside an interrupt, so end-of-frame redraws
+ * use the dominant value as the stable frame mode instead of trusting one
+ * transient write to define a whole row. */
 static uint8_t g_row_mode[CPC_FB_ROWS];
 static uint8_t g_in_redraw = 0;   /* suppresses dirty-row marking during redraw */
 
@@ -57,6 +57,135 @@ unsigned int LineOffset;
 
 unsigned int ScreenModified;
 unsigned int ChangeInk;
+
+#ifdef PICO_BUILD
+/* Per-row bit flags tracking which screen modes have written to each row
+ * during the current frame.  Bit 0 = Mode 0 writes, Bit 1 = Mode 1, etc.
+ * Set in WrScreenMem during Z80 execution (not during redraw passes).
+ * Reset every frame so anchors can re-emerge after screen transitions.
+ * Used by pico_compute_display_modes() to distinguish genuine mode-split
+ * regions from raster-interrupt contamination. */
+static uint8_t g_row_mode_flags[CPC_FB_ROWS];
+
+/* Per-period mode snapshots, captured at each LoopZ80 interrupt boundary.
+ * Used by pico_stable_redraw_mode() for reliable dominant mode detection
+ * (immune to g_row_mode contamination during screen transitions). */
+static uint8_t g_period_mode_snap[6];
+
+void pico_reset_row_mode_flags(void) {
+  memset(g_row_mode_flags, 0, sizeof(g_row_mode_flags));
+}
+
+static uint8_t pico_stable_redraw_mode(void) {
+   /* Use per-period mode snapshots (captured at each LoopZ80 call) for a
+    * reliable dominant mode.  g_row_mode[] can be massively contaminated
+    * during screen transitions when the ISR runs while VRAM is rewritten.
+    * The period_mode data (5/6 periods = Mode 0 for PoP) is authoritative. */
+   unsigned int counts[3] = { 0, 0, 0 };
+   for (int p = 0; p < 6; p++) {
+     if (g_period_mode_snap[p] < 3) counts[g_period_mode_snap[p]]++;
+   }
+
+   uint8_t best = (ScreenMode < 3) ? (uint8_t)ScreenMode : 1;
+   for (uint8_t m = 0; m < 3; m++) {
+     if (counts[m] > counts[best]) best = m;
+   }
+   return best;
+}
+
+/* Compute per-row display modes by detecting raster-interrupt contamination.
+ *
+ * CPC games use raster interrupts to split the screen into regions with
+ * different modes (e.g. Mode 0 game area + Mode 1 status bar).  Our deferred
+ * renderer records WRITE-time modes, but game code may update status bar VRAM
+ * during Mode 0 (main loop), then display it in Mode 1 (raster interrupt).
+ *
+ * Algorithm: find "anchor" rows (pure alt-mode-only writes) in the bottom
+ * portion of the screen.  Once a split region is detected, PERSIST it across
+ * frames — anchors may flicker frame-to-frame as game code intermittently
+ * writes to status bar rows in Mode 0 (timer updates).  The persistent split
+ * region is only cleared on full redraws (level transitions). */
+#define ANCHOR_MIN_ROW  188   /* Only search for anchors in the last ~12 rows */
+static int g_split_first = -1, g_split_last = -1;
+static uint8_t g_split_mode = 0;
+static int g_split_age = 0;    /* frames since last anchor detection */
+#define SPLIT_MAX_AGE  32       /* max frames to persist without anchor refresh */
+
+/* Per-period ink snapshots for palette splitting.
+ * Captured in LoopZ80 at each interrupt period boundary.
+ * The split palette is the palette from the period with the alt mode. */
+static uint8_t g_period_ink[6][17];
+static uint8_t g_split_ink[17];       /* palette for split-region rows */
+static int g_has_split_ink = 0;       /* 1 if split ink is valid */
+
+void pico_record_period_state(int period) {
+  if (period >= 0 && period < 6) {
+    g_period_mode_snap[period] = (uint8_t)ScreenMode;
+    for (int k = 0; k < 17; k++)
+      g_period_ink[period][k] = Ink[k];
+  }
+}
+
+void pico_compute_split_palette(void) {
+  /* Find the dominant mode (most common across periods). */
+  unsigned int mcnt[3] = {0, 0, 0};
+  for (int p = 0; p < 6; p++)
+    if (g_period_mode_snap[p] < 3) mcnt[g_period_mode_snap[p]]++;
+  uint8_t dom = 0;
+  for (uint8_t m = 1; m < 3; m++)
+    if (mcnt[m] > mcnt[dom]) dom = m;
+
+  /* Find the first period with a non-dominant mode — that's the split palette. */
+  g_has_split_ink = 0;
+  for (int p = 0; p < 6; p++) {
+    if (g_period_mode_snap[p] != dom) {
+      for (int k = 0; k < 17; k++)
+        g_split_ink[k] = g_period_ink[p][k];
+      g_has_split_ink = 1;
+      break;
+    }
+  }
+}
+
+void pico_reset_split_region(void) {
+  g_split_first = -1;
+  g_split_last = -1;
+  g_split_age = 0;
+}
+
+static void pico_compute_display_modes(uint8_t *display_mode) {
+  uint8_t dominant = pico_stable_redraw_mode();
+  memset(display_mode, dominant, CPC_FB_ROWS);
+
+  uint8_t alt_mode = dominant ^ 1;
+  uint8_t alt_bit = (uint8_t)(1u << alt_mode);
+
+  /* Look for anchor rows in the bottom portion of the screen. */
+  int first_anchor = -1, last_anchor = -1;
+  for (int r = ANCHOR_MIN_ROW; r < CPC_FB_ROWS; r++) {
+    if (g_row_mode_flags[r] == alt_bit) {
+      if (first_anchor < 0) first_anchor = r;
+      last_anchor = r;
+    }
+  }
+
+  /* If anchors found this frame, update the persistent split region. */
+  if (first_anchor >= 0) {
+    g_split_first = first_anchor;
+    g_split_last = last_anchor;
+    g_split_mode = alt_mode;
+    g_split_age = 0;
+  } else {
+    g_split_age++;
+  }
+
+  /* Apply the persistent split region (expires after SPLIT_MAX_AGE frames). */
+  if (g_split_first >= 0 && g_split_age < SPLIT_MAX_AGE) {
+    for (int r = g_split_first; r <= g_split_last; r++)
+      display_mode[r] = g_split_mode;
+  }
+}
+#endif
 
 /******************************************************************/
 
@@ -122,13 +251,12 @@ void WrScreenMem (register word Addr, register byte Value) {
     {
         int fb_r = scrZeile >> 1;
         if ((unsigned)fb_r < CPC_FB_ROWS) {
-            /* Always keep the persistent per-row mode up to date so that
-             * both RedrawDirtyRows and RedrawScreenImage can replay the row
-             * with the correct mode (game may switch between Mode 0 / Mode 1
-             * for different screen regions within the same frame). */
             g_row_mode[fb_r] = (uint8_t)ScreenMode;
-            if (!g_in_redraw)
+            if (!g_in_redraw) {
                 g_dirty_rows[fb_r] = 1;
+                if (ScreenMode < 3)
+                    g_row_mode_flags[fb_r] |= (1u << ScreenMode);
+            }
         }
     }
 #else
@@ -314,22 +442,24 @@ void WrScreenMem (register word Addr, register byte Value) {
 
 void RedrawScreenImage(void) {
 #ifdef PICO_BUILD
-  /* Re-render every row using the persistent per-row screen mode so that
-   * rows rendered in Mode 0 (status bar) are not incorrectly re-rendered
-   * in Mode 1 (game area) or vice versa.  AktInk has already been updated
-   * to the new palette by the caller, which is what we want here. */
+  /* Full-screen redraws happen at frame/palette boundaries.  Use the
+   * dominant row-mode for all rows — contaminated rows get the correct
+   * dominant mode, and any legitimate mode-split region (status bar)
+   * will self-correct on the next RedrawDirtyRows via the display-mode
+   * heuristic once the Z80 rewrites those rows with the correct mode.
+   *
+   * Reset g_row_mode_flags and the persistent split region so the
+   * heuristic re-learns from fresh Z80 writes after level transitions. */
+  pico_reset_row_mode_flags();
+  pico_reset_split_region();
   unsigned int saved_mode = ScreenMode;
+  ScreenMode = pico_stable_redraw_mode();
   memset(cpc_fb, 0, sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   g_in_redraw = 1;
   for (int bank = 0; bank < 8; bank++) {
     int z = bank << 11;
     for (int C = 0; C < 25; C++) {
-      int scrZ = bank * 2 + C * 16 + (int)LineOffset;
-      if (scrZ > 399) scrZ -= 400;
-      int fb_r = scrZ >> 1;
-      if ((unsigned)fb_r < CPC_FB_ROWS)
-        ScreenMode = g_row_mode[fb_r];
       int s_base = C * 80;
       for (int s = s_base; s < s_base + 80; s++) {
         word Addr = (word)(ScreenBlock + ((ScreenOffset + z + s) & 0x3FFF));
@@ -337,8 +467,8 @@ void RedrawScreenImage(void) {
       }
     }
   }
-  ScreenMode = saved_mode;
   g_in_redraw = 0;
+  ScreenMode = saved_mode;
 #else
   static word Addr, z, s;
   g_in_redraw = 1;
@@ -397,32 +527,33 @@ void RedrawFirstLine (void) {
 #ifdef PICO_BUILD
 /***************************************************************/
 /** Redraw only the rows that were touched by WrScreenMem     **/
-/** this frame.  Each dirty row is cleared in cpc_fb then     **/
-/** re-rendered from current video RAM using the persistent   **/
-/** per-row g_row_mode so mode switches (Mode 0 status bar /  **/
-/** Mode 1 game area) are correctly replayed.                 **/
+/** this frame.  Uses pico_compute_display_modes() to get     **/
+/** the correct per-row screen mode, filtering out scattered  **/
+/** Mode 1 contamination while preserving legitimate mode     **/
+/** splits (e.g. Mode 1 status bar).                          **/
 /***************************************************************/
 void RedrawDirtyRows(void) {
-  /* Snapshot and clear dirty flags. g_in_redraw prevents re-marking during
-   * the redraw loop so the snapshot stays clean. */
   static uint8_t was_dirty[CPC_FB_ROWS];
   memcpy(was_dirty, g_dirty_rows, CPC_FB_ROWS);
   memset(g_dirty_rows, 0, CPC_FB_ROWS);
 
-  /* Quick exit if nothing changed this frame. */
   int any = 0;
   for (int r = 0; r < CPC_FB_ROWS; r++) if (was_dirty[r]) { any = 1; break; }
   if (!any) return;
 
-  /* Clear only the dirty rows in the framebuffer. */
+  /* Compute decontaminated display modes for this frame. */
+  static uint8_t display_mode[CPC_FB_ROWS];
+  pico_compute_display_modes(display_mode);
+
   for (int r = 0; r < CPC_FB_ROWS; r++)
     if (was_dirty[r]) memset(cpc_fb[r], 0, CPC_FB_WIDTH);
 
-  /* Re-render dirty rows.  ChangeInk is FALSE here so AktInk is already the
-   * final palette for the frame.  Use g_row_mode[fb_r] so each row is
-   * rendered in the correct screen mode (Mode 0 / Mode 1 / Mode 2). */
   unsigned int saved_mode = ScreenMode;
+  uint8_t saved_ink[17];
+  memcpy(saved_ink, AktInk, sizeof(saved_ink));
+
   g_in_redraw = 1;
+  int in_split = 0;   /* track current AktInk state to minimize swaps */
   for (int bank = 0; bank < 8; bank++) {
     int z = bank << 11;
     for (int C = 0; C < 25; C++) {
@@ -431,7 +562,18 @@ void RedrawDirtyRows(void) {
       int fb_r = scrZ >> 1;
       if ((unsigned)fb_r >= CPC_FB_ROWS || !was_dirty[fb_r]) continue;
 
-      ScreenMode = g_row_mode[fb_r];
+      ScreenMode = display_mode[fb_r];
+
+      /* Swap AktInk for split-region rows (palette splitting). */
+      int need_split = (g_has_split_ink && g_split_first >= 0 &&
+                        fb_r >= g_split_first && fb_r <= g_split_last);
+      if (need_split && !in_split) {
+        memcpy(AktInk, g_split_ink, sizeof(saved_ink));
+        in_split = 1;
+      } else if (!need_split && in_split) {
+        memcpy(AktInk, saved_ink, sizeof(saved_ink));
+        in_split = 0;
+      }
 
       int s_base = C * 80;
       for (int s = s_base; s < s_base + 80; s++) {
@@ -440,6 +582,8 @@ void RedrawDirtyRows(void) {
       }
     }
   }
+  /* Restore AktInk and ScreenMode. */
+  memcpy(AktInk, saved_ink, sizeof(saved_ink));
   ScreenMode = saved_mode;
   g_in_redraw = 0;
 }
@@ -525,4 +669,3 @@ void SaveScreenAsXPM (char *filename) {
 /******************************************************************/
 
 //  END OF  cpc.c
-

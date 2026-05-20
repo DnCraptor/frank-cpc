@@ -46,6 +46,10 @@ void SaveScreenAsXPM (char *filename);
 
 #ifdef PICO_BUILD
 void RedrawDirtyRows(void);
+void pico_reset_row_mode_flags(void);
+void pico_reset_split_region(void);
+void pico_record_period_state(int period);
+void pico_compute_split_palette(void);
 #endif
 
 #endif
