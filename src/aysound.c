@@ -10,24 +10,36 @@ int     NoSound=0;
 int     SoundOn=1;
 int     dspfd=0;
 int     sample_res = 16;
-int     sample_rate = 22050;
+int     sample_rate = 44100;
 int     sample_channels = 1;
-int     nb_samples = 441;
+int     nb_samples = 882;
 double  magic_number = 1.0;
 int     note[4] = {0,0,0,0};
 double  fq[4] = {0.,0.,0.,0.};
 double  nsample[4] = {0.,0.,0.,0.};
-char    phase[4] = {1,1,1,1};
-char    new_note[4] = {0,0,0,0};
+signed char    phase[4] = {1,1,1,1};
+signed char    new_note[4] = {0,0,0,0};
 char    bits[8] = {1,2,4,8,16,32,64,128};
 char    log_ampl[16] = {0,3,4,5,7,9,11,13,17,21,26,33,41,51,64,80};
 int     max_volume = 0x7fff;
 int     AY_rec = -1;
 FILE    *debug_snd = NULL;
 
-int init_dsp(void) { return 1; }
+static uint32_t noise_seed = 1;
+
+int init_dsp(void) {
+    resetAYRegister();
+    nb_samples   = sample_rate / 50;       /* 22050/50 = 441 */
+    magic_number = sample_rate / 125000.0;
+    /* Full scale: worst case 3 channels at max volume ≈ (480/256)*32767 ≈ 61440,
+     * clamped to int16. Sounds closer to real Amstrad output level. */
+    max_volume   = (2 << (sample_res - 2)) - 1;  /* 32767 */
+    return 1;
+}
+
 void exit_dsp(void) {}
 void switchAYRec(void) {}
+
 void resetAYRegister(void) {
     for (int i = 0; i < 4; ++i) {
         note[i] = 0;
@@ -37,12 +49,125 @@ void resetAYRegister(void) {
         new_note[i] = 0;
     }
 }
-void mix_notes(char *AY_array_reg) {
-    static int16_t silence[441];
-    (void)AY_array_reg;
-    audio_ring_push_mono(silence, 441);
+
+/* Matches the Linux random_noise() distribution: returns 1 with 50% probability,
+ * 2 with 25%, 3 with 12.5%, etc.  Counts leading zeros of a 15-bit LFSR value. */
+int random_noise(void) {
+    noise_seed ^= noise_seed << 13;
+    noise_seed ^= noise_seed >> 17;
+    noise_seed ^= noise_seed << 5;
+    uint32_t x = (noise_seed & 0x7FFF) + 1;   /* 1..32768 */
+    int j = 0;
+    while (x > 0) { x >>= 1; j++; }
+    return 16 - j;                              /* 1..15, biased toward 1 */
 }
-int random_noise(void) { return 0; }
+
+void mix_notes(char *AY_array_reg) {
+    static int16_t buffer[882];
+    int      i, j;
+    double   mix, level;
+    float    amplitude, ampnoise;
+    AYframe *cur_frame;
+
+    if (!SoundOn) {
+        memset(buffer, 0, nb_samples * sizeof(int16_t));
+        audio_ring_push_mono(buffer, nb_samples);
+        return;
+    }
+
+    cur_frame = (AYframe *)AY_array_reg;
+
+    for (j = 0; j < 3; j++) {
+        cur_frame->fqx[j] = cur_frame->fqx[j] & 0x0fff;
+        if (cur_frame->fqx[j] != note[j]) {
+            note[j]     = cur_frame->fqx[j];
+            fq[j]       = note[j] * magic_number;
+            new_note[j] = 1;
+        }
+    }
+
+    cur_frame->fqn = cur_frame->fqn & 0x1f;
+    if (cur_frame->fqn != note[3]) {
+        note[3]    = cur_frame->fqn;
+        fq[3]      = note[3] * magic_number;
+        nsample[3] = fq[3] * random_noise();
+    }
+
+    for (i = 0; i < nb_samples; i++) {
+        mix = 0;
+
+        ampnoise   = phase[3];
+        nsample[3] = nsample[3] - 1;
+        if (nsample[3] < 1) {
+            phase[3]    = -phase[3];
+            nsample[3] += fq[3] * random_noise();
+        }
+
+        for (j = 0; j < 3; j++) {
+            cur_frame->lv[j] = cur_frame->lv[j] & 0x0f;
+
+            /* Noise channel contribution */
+            if ((cur_frame->mix & bits[j + 3]) == 0) {
+                mix += ampnoise * log_ampl[cur_frame->lv[j]];
+            }
+
+            /* Tone channel: skip if period is 0 (no buzz) or volume is 0 */
+            if (fq[j] < 1.0 || cur_frame->lv[j] == 0) {
+                level = 0;
+            } else {
+                amplitude  = phase[j];
+                nsample[j] = nsample[j] - 1;
+                if (nsample[j] < 1) {
+                    phase[j] = -phase[j];
+                    if (new_note[j] == 1) {
+                        new_note[j] = 0;
+                        nsample[j]  = fq[j];
+                    } else {
+                        nsample[j] += fq[j];
+                    }
+                }
+
+                level = 0;
+                if (!(cur_frame->mix & bits[j]))
+                    level = amplitude * log_ampl[cur_frame->lv[j]];
+            }
+
+            mix += level;
+        }
+
+        mix = (mix / 256) * max_volume;
+
+        /* Clamp to int16 range */
+        if (mix > 32767.0)  mix = 32767.0;
+        if (mix < -32768.0) mix = -32768.0;
+
+        buffer[i] = (int16_t)mix;
+    }
+
+    /* Two-stage post-filter:
+     * 1) DC-blocking high-pass (removes DC offset from asymmetric mixing)
+     * 2) First-order low-pass at ~4 kHz to tame square-wave harmonics */
+    {
+        static double lpf_state = 0.0;
+        static double dc_prev_in = 0.0, dc_prev_out = 0.0;
+        const double lp_alpha = 0.44;   /* ~4 kHz cutoff at 44100 Hz */
+        const double dc_alpha = 0.995;  /* DC-blocker pole */
+        for (i = 0; i < nb_samples; i++) {
+            double s = (double)buffer[i];
+            /* DC blocker: y[n] = x[n] - x[n-1] + alpha * y[n-1] */
+            double dc_out = s - dc_prev_in + dc_alpha * dc_prev_out;
+            dc_prev_in = s;
+            dc_prev_out = dc_out;
+            /* Low-pass */
+            lpf_state += lp_alpha * (dc_out - lpf_state);
+            if (lpf_state > 32767.0) lpf_state = 32767.0;
+            if (lpf_state < -32768.0) lpf_state = -32768.0;
+            buffer[i] = (int16_t)lpf_state;
+        }
+    }
+
+    audio_ring_push_mono(buffer, nb_samples);
+}
 #else
 /***************************************/
 /**                                   **/

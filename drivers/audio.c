@@ -49,8 +49,8 @@
 
 #define DMA_BUFFER_COUNT 2
 // Max buffer size in stereo frames (32-bit words).
-// SNES at 32kHz/60fps = 533 frames; generous headroom.
-#define DMA_BUFFER_MAX_SAMPLES 600
+// CPC at 44100Hz/50fps = 882 frames.
+#define DMA_BUFFER_MAX_SAMPLES 1024
 
 static uint32_t __attribute__((aligned(4))) dma_buffers[DMA_BUFFER_COUNT][DMA_BUFFER_MAX_SAMPLES];
 
@@ -77,14 +77,14 @@ static void audio_dma_irq_handler(void);
 
 i2s_config_t i2s_get_default_config(void) {
     i2s_config_t config = {
-        .sample_freq = 18000,
+        .sample_freq = 44100,
         .channel_count = 2,
         .data_pin = I2S_DATA_PIN,
         .clock_pin_base = I2S_CLOCK_PIN_BASE,
         .pio = pio1,   // PIO1 - HDMI uses PIO0
         .sm = 0,
         .dma_channel = 0,
-        .dma_trans_count = 300,
+        .dma_trans_count = 882,
         .dma_buf = NULL,
         .volume = 0,
     };

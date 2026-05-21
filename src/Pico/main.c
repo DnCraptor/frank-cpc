@@ -57,8 +57,8 @@ static void __no_inline_not_in_flash_func(set_flash_timings)(int cpu_mhz, int fl
                         | ((uint32_t)divisor << QMI_M0_TIMING_CLKDIV_LSB);
 }
 
-#define AUDIO_SAMPLE_RATE       22050
-#define AUDIO_FRAMES_PER_CHUNK  441
+#define AUDIO_SAMPLE_RATE       44100
+#define AUDIO_FRAMES_PER_CHUNK  882
 #define AUDIO_RING_FRAMES       (1u << 12)
 #define AUDIO_RING_MASK         (AUDIO_RING_FRAMES - 1)
 
@@ -92,7 +92,7 @@ void __time_critical_func(render_core)(void) {
     i2s_cfg = i2s_get_default_config();
     i2s_cfg.sample_freq     = AUDIO_SAMPLE_RATE;
     i2s_cfg.dma_trans_count = AUDIO_FRAMES_PER_CHUNK;
-    i2s_volume(&i2s_cfg, 0);
+    i2s_volume(&i2s_cfg, 0);   /* no extra shift; volume controlled in mix_notes */
     i2s_init(&i2s_cfg);
 
     static uint32_t __attribute__((aligned(32))) chunk[AUDIO_FRAMES_PER_CHUNK];
@@ -180,7 +180,7 @@ int main(void) {
 
     multicore_launch_core1(render_core);
     while (!core1_ready) tight_loop_contents();
-    printf("I2S audio started (22050 Hz)\n");
+    printf("I2S audio started (44100 Hz)\n");
 
     cpc_pico_main();
 

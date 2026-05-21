@@ -52,8 +52,9 @@ extern  double  magic_number;
 extern  int     note[4];
 extern  double  fq[4];
 extern  double  nsample[4];
-extern  char    phase[4];
-extern  char    new_note[4];
+/* Use signed types for phase — ARM char is unsigned by default */
+extern  signed char    phase[4];
+extern  signed char    new_note[4];
 extern  char    bits[8];
 extern  char    log_ampl[16];
 extern  int     max_volume;
