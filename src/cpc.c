@@ -103,7 +103,7 @@ word LoopZ80(register Z80 *R) {
       }
       if (!palette_blank) {
         uint64_t t0 = time_us_64();
-        if (ChangeInk) {
+        if (ChangeInk || pico_has_ink_events() || pico_has_crtc_events()) {
           RedrawScreenImage();
         } else {
           RedrawDirtyRows();
@@ -116,8 +116,12 @@ word LoopZ80(register Z80 *R) {
       }
     }
     ChangeInk = FALSE;
+    pico_debug_ink_events();
+    pico_debug_crtc_events();
     cpc_frame_present();
     IRQCount = 0;
+    pico_reset_ink_events();
+    pico_reset_crtc_events();
 
     mix_notes(AYRegister);
 
@@ -135,13 +139,15 @@ word LoopZ80(register Z80 *R) {
     uint64_t now_us = time_us_64();
     if (hb_last_us == 0) hb_last_us = now_us;
     if (now_us - hb_last_us >= 1000000u) {
-      printf("[HB] fps=%lu  work_max=%lums  redraw=%lums(n=%lu)  skips=%lu  blank=%lu\n",
+      extern uint32_t pico_get_ink_event_total(void);
+      printf("[HB] fps=%lu  work_max=%lums  redraw=%lums(n=%lu)  skips=%lu  blank=%lu  ink_total=%lu\n",
              (unsigned long)hb_frames,
              (unsigned long)(hb_max_work_us / 1000u),
              (unsigned long)(hb_max_redraw_us / 1000u),
              (unsigned long)hb_redraw_count,
              (unsigned long)new_skips,
-             (unsigned long)hb_blank_count);
+             (unsigned long)hb_blank_count,
+             (unsigned long)pico_get_ink_event_total());
       hb_frames        = 0;
       hb_max_work_us   = 0;
       hb_max_redraw_us = 0;

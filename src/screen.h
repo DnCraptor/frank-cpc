@@ -47,6 +47,14 @@ void SaveScreenAsXPM (char *filename);
 #ifdef PICO_BUILD
 void RedrawDirtyRows(void);
 void pico_record_period_state(int period);
+void pico_record_ink_event(uint8_t ink_idx, uint8_t value);
+void pico_reset_ink_events(void);
+int  pico_has_ink_events(void);
+void pico_debug_ink_events(void);
+void pico_record_crtc_event(void);
+void pico_reset_crtc_events(void);
+int  pico_has_crtc_events(void);
+void pico_debug_crtc_events(void);
 #endif
 
 #endif

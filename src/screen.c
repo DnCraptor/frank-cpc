@@ -70,6 +70,31 @@ static int g_has_split_ink = 0;
 static int g_split_ink_changed = 0;   /* set when split ink differs from previous frame */
 static int g_split_row = -1;          /* first fb row of status bar region */
 
+/* ---- Per-scanline ink change tracking (raster bars) ----
+ * Games change ink colors mid-frame via timed OUT instructions to produce
+ * raster effects.  We record each ink change event with a frame-relative
+ * cycle offset, then at render time replay them to build per-row palettes.
+ *
+ * CPC timing: 1 scanline = 64µs = 256 T-states at 4MHz.
+ * One frame = 6 periods × 13333 T-states = 79998 T-states ≈ 312 scanlines.
+ * Visible area = 200 scanlines (fb rows 0-199). */
+#define INK_EVENT_MAX 256
+typedef struct {
+    uint32_t frame_cycle;  /* T-state offset from frame start */
+    uint8_t  ink_idx;      /* which ink (0-15) or 16=border */
+    uint8_t  value;        /* CPC hardware color (0-31 + MonoScreen) */
+} ink_event_t;
+
+static ink_event_t g_ink_events[INK_EVENT_MAX];
+static int g_ink_event_count = 0;
+static int g_ink_events_active = 0; /* nonzero when events were recorded */
+
+/* Ink state at frame start (saved before any events are recorded). */
+static uint8_t g_frame_start_ink[17];
+
+/* Per-row ink table, built from events at render time. */
+static uint8_t g_row_ink[CPC_FB_ROWS][17];
+
 void pico_record_period_state(int period) {
   extern unsigned int DisplayMode;
   if (period >= 0 && period < 6) {
@@ -81,6 +106,178 @@ void pico_record_period_state(int period) {
 
 uint8_t pico_get_period_mode(int p) {
   return (p >= 0 && p < 6) ? g_period_mode_snap[p] : 255;
+}
+
+/* Record an ink change event with frame-relative cycle offset.
+ * Called from OutZ80 when an ink is set (Gate Array command 0x40). */
+static uint32_t g_ink_event_total = 0;
+void pico_record_ink_event(uint8_t ink_idx, uint8_t value) {
+  g_ink_event_total++;
+  if (g_ink_event_count < INK_EVENT_MAX) {
+    extern int IRQCount, CPUZyklenBisInt;
+    extern Z80 cpu;
+    /* cpu.ICount = remaining cycles in this period */
+    uint32_t consumed = (uint32_t)(CPUZyklenBisInt - cpu.ICount);
+    uint32_t frame_cyc = (uint32_t)IRQCount * (uint32_t)CPUZyklenBisInt + consumed;
+    g_ink_events[g_ink_event_count].frame_cycle = frame_cyc;
+    g_ink_events[g_ink_event_count].ink_idx = ink_idx;
+    g_ink_events[g_ink_event_count].value = value;
+    g_ink_event_count++;
+    g_ink_events_active = 1;
+  }
+}
+uint32_t pico_get_ink_event_total(void) { return g_ink_event_total; }
+
+/* Reset ink event buffer at the start of each frame.
+ * Saves current Ink[] as the initial state for replay. */
+void pico_reset_ink_events(void) {
+  extern byte Ink[];
+  memcpy(g_frame_start_ink, Ink, 17);
+  g_ink_event_count = 0;
+  g_ink_events_active = 0;
+}
+
+/* CPC timing constants for raster bar calculations. */
+#define CPC_TSTATES_PER_LINE 256
+#define CPC_VBLANK_LINES 40  /* approximate top blanking lines */
+
+int pico_has_ink_events(void) {
+  return g_ink_events_active && g_ink_event_count > 0;
+}
+
+/* Debug: dump ink events for one frame (called from cpc.c at frame end). */
+static struct { int frame; int ink_count; int crtc; } g_evt_log[50];
+static int g_evt_log_idx = 0;
+void pico_debug_ink_events(void) {
+  extern int pico_has_crtc_events(void);
+  static int dbg_frame = 0;
+  dbg_frame++;
+  /* Log frames that have events, up to 50 entries */
+  if (g_evt_log_idx < 50 && (g_ink_event_count > 0 || pico_has_crtc_events())) {
+    g_evt_log[g_evt_log_idx].frame = dbg_frame;
+    g_evt_log[g_evt_log_idx].ink_count = g_ink_event_count;
+    g_evt_log[g_evt_log_idx].crtc = pico_has_crtc_events();
+    g_evt_log_idx++;
+  }
+  /* Dump at frame 2000 */
+  if (dbg_frame == 2000) {
+    printf("[EVT-DUMP] %d entries:\n", g_evt_log_idx);
+    for (int i = 0; i < g_evt_log_idx; i++) {
+      printf("  f=%d ink=%d crtc=%d\n",
+             g_evt_log[i].frame, g_evt_log[i].ink_count, g_evt_log[i].crtc);
+    }
+  }
+}
+
+/* ---- Per-scanline CRTC address tracking ----
+ * Games change CRTC screen start address (R12/R13) mid-frame via timed
+ * OUT instructions to produce split-screen / wipe / scroll effects.
+ * We record each change with a cycle offset, then at render time build
+ * per-row screen addresses. */
+#define CRTC_EVENT_MAX 64
+typedef struct {
+    uint32_t frame_cycle;
+    uint16_t screen_addr;  /* combined (R12<<8)|R13 */
+    uint8_t  ink_snapshot[17]; /* palette at time of CRTC change */
+} crtc_event_t;
+
+static crtc_event_t g_crtc_events[CRTC_EVENT_MAX];
+static int g_crtc_event_count = 0;
+static uint16_t g_frame_start_screen_addr;
+static uint16_t g_row_screen_addr[CPC_FB_ROWS];
+static uint8_t g_crtc_row_ink[CPC_FB_ROWS][17]; /* per-row inks from CRTC snapshots */
+
+void pico_record_crtc_event(void) {
+    if (g_crtc_event_count < CRTC_EVENT_MAX) {
+        extern int IRQCount, CPUZyklenBisInt;
+        extern Z80 cpu;
+        uint32_t consumed = (uint32_t)(CPUZyklenBisInt - cpu.ICount);
+        uint32_t frame_cyc = (uint32_t)IRQCount * (uint32_t)CPUZyklenBisInt + consumed;
+        uint16_t sa = (HD6845Register[12] << 8) + HD6845Register[13];
+        g_crtc_events[g_crtc_event_count].frame_cycle = frame_cyc;
+        g_crtc_events[g_crtc_event_count].screen_addr = sa;
+        memcpy(g_crtc_events[g_crtc_event_count].ink_snapshot, Ink, 17);
+        g_crtc_event_count++;
+    }
+}
+
+void pico_reset_crtc_events(void) {
+    g_frame_start_screen_addr = (HD6845Register[12] << 8) + HD6845Register[13];
+    g_crtc_event_count = 0;
+}
+
+int pico_has_crtc_events(void) {
+    return g_crtc_event_count > 0;
+}
+
+/* Build per-row screen address and ink tables from CRTC events. */
+static void pico_build_row_screen_addr(void) {
+    uint16_t cur = g_frame_start_screen_addr;
+    /* Start with current AktInk for rows before first CRTC event */
+    const uint8_t *cur_ink = (g_crtc_event_count > 0)
+        ? g_crtc_events[0].ink_snapshot : AktInk;
+    int ev_idx = 0;
+    for (int r = 0; r < CPC_FB_ROWS; r++) {
+        while (ev_idx < g_crtc_event_count) {
+            int scanline = (int)(g_crtc_events[ev_idx].frame_cycle / CPC_TSTATES_PER_LINE);
+            int ev_row = scanline - CPC_VBLANK_LINES;
+            if (ev_row > r) break;
+            cur = g_crtc_events[ev_idx].screen_addr;
+            cur_ink = g_crtc_events[ev_idx].ink_snapshot;
+            ev_idx++;
+        }
+        g_row_screen_addr[r] = cur;
+        memcpy(g_crtc_row_ink[r], cur_ink, 17);
+    }
+}
+
+void pico_debug_crtc_events(void) {
+    static int dbg_frame = 0;
+    dbg_frame++;
+    if (dbg_frame >= 500 && dbg_frame <= 520 && g_crtc_event_count > 0) {
+        printf("[CRTC] f=%d count=%d start=0x%04X\n",
+               dbg_frame, g_crtc_event_count, g_frame_start_screen_addr);
+        for (int i = 0; i < g_crtc_event_count && i < 5; i++) {
+            int scanline = (int)(g_crtc_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
+            printf("  cyc=%u sl=%d addr=0x%04X\n",
+                   g_crtc_events[i].frame_cycle, scanline,
+                   g_crtc_events[i].screen_addr);
+        }
+    }
+}
+
+/* Build per-row ink table from ink events.
+ * Starts from frame_start_ink[], then replays events in cycle order.
+ * CPC visible area: ~40 blank lines, then 200 visible lines.
+ * scanline = frame_cycle / 256, fb_row = scanline - VBLANK_LINES */
+
+static void pico_build_row_ink_table(void) {
+  if (!g_ink_events_active || g_ink_event_count == 0) {
+    for (int r = 0; r < CPC_FB_ROWS; r++)
+      memcpy(g_row_ink[r], AktInk, 17);
+    return;
+  }
+
+  /* Convert each event's frame_cycle to a framebuffer row. */
+  int ev_row[INK_EVENT_MAX];
+  for (int i = 0; i < g_ink_event_count; i++) {
+    int scanline = (int)(g_ink_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
+    ev_row[i] = scanline - CPC_VBLANK_LINES;
+  }
+
+  /* Forward sweep: start from the ink state at frame start, apply events
+   * as we pass each row. */
+  uint8_t running_ink[17];
+  memcpy(running_ink, g_frame_start_ink, 17);
+
+  int ev_idx = 0;
+  for (int r = 0; r < CPC_FB_ROWS; r++) {
+    while (ev_idx < g_ink_event_count && ev_row[ev_idx] <= r) {
+      running_ink[g_ink_events[ev_idx].ink_idx] = g_ink_events[ev_idx].value;
+      ev_idx++;
+    }
+    memcpy(g_row_ink[r], running_ink, 17);
+  }
 }
 
 /* Determine the dominant display mode (used for most of the screen). */
@@ -444,6 +641,10 @@ void RedrawScreenImage(void) {
   static uint8_t display_mode[CPC_FB_ROWS];
   pico_build_display_modes(display_mode);
 
+  /* Build per-row ink table if raster ink events were recorded. */
+  int use_row_ink = g_ink_events_active && g_ink_event_count > 0;
+  if (use_row_ink) pico_build_row_ink_table();
+
   memset(cpc_fb, AktInk[16], sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   g_in_redraw = 1;
@@ -473,7 +674,8 @@ void RedrawScreenImage(void) {
         if ((unsigned)fb_r >= CPC_FB_ROWS) continue;
 
         unsigned int mode = display_mode[fb_r];
-        const uint8_t *ink = (g_has_split_ink && fb_r > g_split_row)
+        const uint8_t *ink = use_row_ink ? g_row_ink[fb_r]
+                           : (g_has_split_ink && fb_r > g_split_row)
                              ? g_split_ink : AktInk;
 
         for (int b = 0; b < display_chars * 2; b++) {
@@ -486,6 +688,32 @@ void RedrawScreenImage(void) {
         }
       }
     }
+  } else if (g_crtc_event_count > 0) {
+    /* ---- Per-row CRTC split rendering ----
+     * Used when R12/R13 change mid-frame (wipe/split effects).
+     * Each row may use a different screen start address. */
+    pico_build_row_screen_addr();
+    for (int r = 0; r < CPC_FB_ROWS; r++) {
+        uint16_t sa = g_row_screen_addr[r];
+        uint16_t row_scroff = (sa & 1023) << 1;
+        uint16_t row_scrblk = (sa << 2) & 0xC000;
+        int row_lineoff = (((sa & 1023) / 40) << 4);
+
+        unsigned int mode = display_mode[r];
+        const uint8_t *ink = use_row_ink ? g_row_ink[r]
+                           : g_crtc_row_ink[r];
+
+        int bank = r % 8;
+        int z = bank << 11;
+        int lo_chars = row_lineoff / 16;
+        int C = (r / 8 - lo_chars + 25) % 25;
+
+        int s_base = C * 80;
+        for (int b = 0; b < 80; b++) {
+            word Addr = (word)(row_scrblk + ((row_scroff + z + s_base + b) & 0x3FFF));
+            pico_render_byte_at(RAM[Addr], mode, ink, b * 4, r);
+        }
+    }
   } else {
     /* ---- Standard 40×25 rendering path ---- */
     for (int bank = 0; bank < 8; bank++) {
@@ -495,7 +723,10 @@ void RedrawScreenImage(void) {
         if (scrZ > 399) scrZ -= 400;
         int fb_r = scrZ >> 1;
         unsigned int mode = ((unsigned)fb_r < CPC_FB_ROWS) ? display_mode[fb_r] : ScreenMode;
-        const uint8_t *ink = (g_has_split_ink && fb_r > g_split_row) ? g_split_ink : AktInk;
+        const uint8_t *ink = use_row_ink && (unsigned)fb_r < CPC_FB_ROWS
+                             ? g_row_ink[fb_r]
+                             : (g_has_split_ink && fb_r > g_split_row)
+                               ? g_split_ink : AktInk;
 
         int s_base = C * 80;
         for (int s = s_base; s < s_base + 80; s++) {
@@ -567,6 +798,17 @@ void RedrawFirstLine (void) {
 /** using display-time modes from period snapshots.            **/
 /***************************************************************/
 void RedrawDirtyRows(void) {
+  /* If raster ink events were recorded, promote to full redraw
+   * since dirty-row tracking can't handle per-scanline palette changes. */
+  if (g_ink_events_active && g_ink_event_count > 0) {
+    int any = 0;
+    for (int r = 0; r < CPC_FB_ROWS; r++) if (g_dirty_rows[r]) { any = 1; break; }
+    memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
+    /* Always do full redraw when raster effects are active. */
+    RedrawScreenImage();
+    return;
+  }
+
   /* For overscan modes, dirty row tracking uses the standard PixelPosition
    * mapping which gives wrong positions.  Fall back to full redraw. */
   int chars_per_row = HD6845Register[1] ? HD6845Register[1] : 40;

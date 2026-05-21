@@ -121,6 +121,9 @@ void OutZ80 (register word Port, register byte Value) {
 
       case 0x40:
         Ink [InkNum] = (Value & 0x1F) + MonoScreen;
+#ifdef PICO_BUILD
+        pico_record_ink_event((uint8_t)InkNum, Ink[InkNum]);
+#endif
         ok = TRUE;
         break;
     }
@@ -148,10 +151,16 @@ void OutZ80 (register word Port, register byte Value) {
       LineOffset= (((ScreenAddr & 1023)/40)<<4);
       ScreenBlock = (ScreenAddr<<2) & 0xC000;
       ScreenBank = ScreenBlock >> 14;
+#ifdef PICO_BUILD
+      /* Record mid-frame CRTC address change for per-row rendering.
+       * Skip immediate redraw — frame-end handles splits correctly. */
+      pico_record_crtc_event();
+#else
       if (ScreenOffset == (((2048 | AlterScrOffs) - 80) & 0x7FF))
         RedrawFirstLine ();
       else
         RedrawLastLine ();
+#endif
     }
     /* Force a full redraw when the display layout changes (overscan). */
     if (HD6845RegisterPointer == 1 || HD6845RegisterPointer == 6)
