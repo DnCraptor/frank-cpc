@@ -48,6 +48,7 @@ void SaveScreenAsXPM (char *filename);
 void RedrawDirtyRows(void);
 void pico_record_period_state(int period);
 void pico_record_ink_event(uint8_t ink_idx, uint8_t value);
+void pico_record_mode_event(uint8_t mode);
 void pico_reset_ink_events(void);
 int  pico_has_ink_events(void);
 int  pico_get_ink_event_count(void);

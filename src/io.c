@@ -82,8 +82,10 @@ void OutZ80 (register word Port, register byte Value) {
           }
           int is_fw = !game_took_over &&
                       ((pc >= 0xB900 && pc <= 0xBA84) || pc <= 0x0043);
-          if (!is_fw)
+          if (!is_fw) {
             DisplayMode = Value & 3;
+            pico_record_mode_event((uint8_t)(Value & 3));
+          }
         }
 #endif
         /* MRER bit 4: reset Gate Array IRQ timer (used by raster games). */

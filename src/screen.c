@@ -92,6 +92,21 @@ static int g_ink_events_active = 0; /* nonzero when events were recorded */
 /* Ink state at frame start (saved before any events are recorded). */
 static uint8_t g_frame_start_ink[17];
 
+/* ---- Per-scanline display mode tracking ----
+ * The gate array mode register can change mid-frame (e.g. IRQ acknowledge
+ * writes mode 2 briefly before the handler sets mode 1).  We record each
+ * mode change with a frame-relative cycle offset, then at render time
+ * build a per-row mode table so each scanline uses the correct mode. */
+#define MODE_EVENT_MAX 64
+typedef struct {
+    uint32_t frame_cycle;
+    uint8_t  mode;
+} mode_event_t;
+
+static mode_event_t g_mode_events[MODE_EVENT_MAX];
+static int g_mode_event_count = 0;
+static uint8_t g_frame_start_mode = 1;
+
 /* Per-row ink table, built from events at render time. */
 static uint8_t g_row_ink[CPC_FB_ROWS][17];
 
@@ -129,13 +144,30 @@ void pico_record_ink_event(uint8_t ink_idx, uint8_t value) {
 uint32_t pico_get_ink_event_total(void) { return g_ink_event_total; }
 int pico_get_ink_event_count(void) { return g_ink_event_count; }
 
+/* Record a display mode change event with frame-relative cycle offset.
+ * Called from OutZ80 when the gate array mode register is written. */
+void pico_record_mode_event(uint8_t mode) {
+  if (g_mode_event_count < MODE_EVENT_MAX) {
+    extern int IRQCount, CPUZyklenBisInt;
+    extern Z80 cpu;
+    uint32_t consumed = (uint32_t)(CPUZyklenBisInt - cpu.ICount);
+    uint32_t frame_cyc = (uint32_t)IRQCount * (uint32_t)CPUZyklenBisInt + consumed;
+    g_mode_events[g_mode_event_count].frame_cycle = frame_cyc;
+    g_mode_events[g_mode_event_count].mode = mode;
+    g_mode_event_count++;
+  }
+}
+
 /* Reset ink event buffer at the start of each frame.
- * Saves current Ink[] as the initial state for replay. */
+ * Saves current Ink[] and DisplayMode as the initial state for replay. */
 void pico_reset_ink_events(void) {
   extern byte Ink[];
+  extern unsigned int DisplayMode;
   memcpy(g_frame_start_ink, Ink, 17);
+  g_frame_start_mode = (uint8_t)DisplayMode;
   g_ink_event_count = 0;
   g_ink_events_active = 0;
+  g_mode_event_count = 0;
 }
 
 /* CPC timing constants for raster bar calculations. */
@@ -271,11 +303,36 @@ static uint8_t pico_dominant_mode(void) {
   return best;
 }
 
-/* Build a per-row display mode map.  The dominant mode covers the whole
- * screen, then if period 0 has a different mode (status bar), apply it
- * to the bottom 8 rows (CPC char row 24 → fb rows 192-199).
- * Also compute the split palette from the alt-mode period's ink snapshot. */
+/* Build a per-row display mode map.
+ * When mode events are recorded (games that change mode mid-frame),
+ * replay them in cycle order to build an accurate per-row mode table.
+ * Otherwise, fall back to dominant-mode + status-bar-split heuristic. */
 static void pico_build_display_modes(uint8_t *display_mode) {
+  if (g_mode_event_count > 0) {
+    /* Per-row mode from recorded events — accurate for raster effects. */
+    int ev_row[MODE_EVENT_MAX];
+    for (int i = 0; i < g_mode_event_count; i++) {
+      int scanline = (int)(g_mode_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
+      ev_row[i] = scanline - CPC_VBLANK_LINES;
+    }
+
+    uint8_t running_mode = g_frame_start_mode;
+    int ev_idx = 0;
+    for (int r = 0; r < CPC_FB_ROWS; r++) {
+      while (ev_idx < g_mode_event_count && ev_row[ev_idx] <= r) {
+        running_mode = g_mode_events[ev_idx].mode;
+        ev_idx++;
+      }
+      display_mode[r] = running_mode;
+    }
+
+    /* Still compute split ink for status bar if needed */
+    g_has_split_ink = 0;
+    g_split_row = -1;
+    return;
+  }
+
+  /* Fallback: use dominant mode with optional status bar split. */
   uint8_t dom = pico_dominant_mode();
   memset(display_mode, dom, CPC_FB_ROWS);
 
@@ -716,6 +773,7 @@ void RedrawScreenImage(void) {
       }
     }
   }
+
   g_in_redraw = 0;
 #else
   static word Addr, z, s;

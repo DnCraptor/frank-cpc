@@ -113,6 +113,10 @@ void cpc_frame_present(void) {
     if (cpc_ui_is_visible())
         cpc_ui_render(dst, CPC_FB_WIDTH, CPC_SCREEN_LINES);
 
+    /* Point VGA output at the just-completed buffer so the display
+     * always shows a fully rendered frame (HDMI already reads from
+     * SCREEN[!current_buffer] after the flip below). */
+    graphics_set_buffer(dst);
     current_buffer ^= 1u;
 }
 
