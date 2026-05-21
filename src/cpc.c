@@ -95,13 +95,16 @@ word LoopZ80(register Z80 *R) {
     if (Ink[16] != AktInk[16]) AktInk[16] = Ink[16];
 
     /* Skip rendering when palette is "blank" (all inks identical = game
-     * hiding sprite updates behind a solid palette). */
+     * hiding sprite updates behind a solid palette).
+     * BUT: if there are mid-frame ink or CRTC events, the frame had
+     * visible content during the scan even if end-of-frame is blank. */
     {
       int palette_blank = 1;
       for (i = 1; i <= 15; i++) {
         if (AktInk[i] != AktInk[0]) { palette_blank = 0; break; }
       }
-      if (!palette_blank) {
+      int has_mid_frame = pico_has_ink_events() || pico_has_crtc_events();
+      if (!palette_blank || has_mid_frame) {
         uint64_t t0 = time_us_64();
         if (ChangeInk || pico_has_ink_events() || pico_has_crtc_events()) {
           RedrawScreenImage();
@@ -116,8 +119,6 @@ word LoopZ80(register Z80 *R) {
       }
     }
     ChangeInk = FALSE;
-    pico_debug_ink_events();
-    pico_debug_crtc_events();
     cpc_frame_present();
     IRQCount = 0;
     pico_reset_ink_events();

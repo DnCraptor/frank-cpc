@@ -127,6 +127,7 @@ void pico_record_ink_event(uint8_t ink_idx, uint8_t value) {
   }
 }
 uint32_t pico_get_ink_event_total(void) { return g_ink_event_total; }
+int pico_get_ink_event_count(void) { return g_ink_event_count; }
 
 /* Reset ink event buffer at the start of each frame.
  * Saves current Ink[] as the initial state for replay. */
@@ -139,35 +140,13 @@ void pico_reset_ink_events(void) {
 
 /* CPC timing constants for raster bar calculations. */
 #define CPC_TSTATES_PER_LINE 256
-#define CPC_VBLANK_LINES 40  /* approximate top blanking lines */
+#define CPC_VBLANK_LINES 34  /* lines before visible area (from CPCEC) */
 
 int pico_has_ink_events(void) {
   return g_ink_events_active && g_ink_event_count > 0;
 }
 
-/* Debug: dump ink events for one frame (called from cpc.c at frame end). */
-static struct { int frame; int ink_count; int crtc; } g_evt_log[50];
-static int g_evt_log_idx = 0;
-void pico_debug_ink_events(void) {
-  extern int pico_has_crtc_events(void);
-  static int dbg_frame = 0;
-  dbg_frame++;
-  /* Log frames that have events, up to 50 entries */
-  if (g_evt_log_idx < 50 && (g_ink_event_count > 0 || pico_has_crtc_events())) {
-    g_evt_log[g_evt_log_idx].frame = dbg_frame;
-    g_evt_log[g_evt_log_idx].ink_count = g_ink_event_count;
-    g_evt_log[g_evt_log_idx].crtc = pico_has_crtc_events();
-    g_evt_log_idx++;
-  }
-  /* Dump at frame 2000 */
-  if (dbg_frame == 2000) {
-    printf("[EVT-DUMP] %d entries:\n", g_evt_log_idx);
-    for (int i = 0; i < g_evt_log_idx; i++) {
-      printf("  f=%d ink=%d crtc=%d\n",
-             g_evt_log[i].frame, g_evt_log[i].ink_count, g_evt_log[i].crtc);
-    }
-  }
-}
+/* pico_debug_ink_events: defined after pico_build_row_ink_table below */
 
 /* ---- Per-scanline CRTC address tracking ----
  * Games change CRTC screen start address (R12/R13) mid-frame via timed
@@ -210,6 +189,10 @@ int pico_has_crtc_events(void) {
     return g_crtc_event_count > 0;
 }
 
+int pico_get_crtc_event_count(void) {
+    return g_crtc_event_count;
+}
+
 /* Build per-row screen address and ink tables from CRTC events. */
 static void pico_build_row_screen_addr(void) {
     uint16_t cur = g_frame_start_screen_addr;
@@ -232,18 +215,7 @@ static void pico_build_row_screen_addr(void) {
 }
 
 void pico_debug_crtc_events(void) {
-    static int dbg_frame = 0;
-    dbg_frame++;
-    if (dbg_frame >= 500 && dbg_frame <= 520 && g_crtc_event_count > 0) {
-        printf("[CRTC] f=%d count=%d start=0x%04X\n",
-               dbg_frame, g_crtc_event_count, g_frame_start_screen_addr);
-        for (int i = 0; i < g_crtc_event_count && i < 5; i++) {
-            int scanline = (int)(g_crtc_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
-            printf("  cyc=%u sl=%d addr=0x%04X\n",
-                   g_crtc_events[i].frame_cycle, scanline,
-                   g_crtc_events[i].screen_addr);
-        }
-    }
+    /* Debug output removed — data collected via EVT-SUM dump. */
 }
 
 /* Build per-row ink table from ink events.
@@ -278,6 +250,14 @@ static void pico_build_row_ink_table(void) {
     }
     memcpy(g_row_ink[r], running_ink, 17);
   }
+}
+
+/* Debug: buffer ALL frames with events, dump compact summary. */
+static int g_dbg_frame = 0;
+
+void pico_debug_ink_events(void) {
+  g_dbg_frame++;
+  (void)g_dbg_frame;
 }
 
 /* Determine the dominant display mode (used for most of the screen). */

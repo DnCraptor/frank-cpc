@@ -79,23 +79,9 @@ void OutZ80 (register word Port, register byte Value) {
           if (!game_took_over && (Value & 0x0C) == 0x0C &&
               pc > 0x0043 && (pc < 0xB900 || pc > 0xBA84)) {
             game_took_over = 1;
-            /* Dump B941 before decompressor runs */
-            printf("[PRE-DECOMP] @0038=");
-            for (int _k=0;_k<4;_k++) printf("%02X",RAM[0x0038+_k]);
-            printf(" @B941=");
-            for (int _k=0;_k<16;_k++) printf("%02X",RAM[0xB941+_k]);
-            printf(" IFF=%02X\n", cpu.IFF);
           }
           int is_fw = !game_took_over &&
                       ((pc >= 0xB900 && pc <= 0xBA84) || pc <= 0x0043);
-          static uint32_t mrer_dbg_cnt = 0;
-          if (mrer_dbg_cnt < 100 || !is_fw) {
-            if (mrer_dbg_cnt < 2000) {
-              mrer_dbg_cnt++;
-              printf("[MRER] pc=%04X v=%02X m=%d fw=%d gto=%d\n",
-                     pc, Value, Value & 3, is_fw, game_took_over);
-            }
-          }
           if (!is_fw)
             DisplayMode = Value & 3;
         }
