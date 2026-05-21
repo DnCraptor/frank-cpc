@@ -71,11 +71,16 @@ static int g_split_ink_changed = 0;   /* set when split ink differs from previou
 static int g_split_row = -1;          /* first fb row of status bar region */
 
 void pico_record_period_state(int period) {
+  extern unsigned int DisplayMode;
   if (period >= 0 && period < 6) {
-    g_period_mode_snap[period] = (uint8_t)ScreenMode;
+    g_period_mode_snap[period] = (uint8_t)DisplayMode;
     for (int k = 0; k < 17; k++)
       g_period_ink[period][k] = Ink[k];
   }
+}
+
+uint8_t pico_get_period_mode(int p) {
+  return (p >= 0 && p < 6) ? g_period_mode_snap[p] : 255;
 }
 
 /* Determine the dominant display mode (used for most of the screen). */
@@ -140,6 +145,9 @@ void InitScreen (void) {
    ScreenOffset = 0;
    ScreenBlock = 0xC000;
    ScreenMode = 1;
+#ifdef PICO_BUILD
+   { extern unsigned int DisplayMode; DisplayMode = 1; }
+#endif
    ChangeInk=FALSE;
 }
 
@@ -447,11 +455,7 @@ void RedrawScreenImage(void) {
   int rows_displayed = HD6845Register[6] ? HD6845Register[6] : 25;
 
   if (chars_per_row != 40 || rows_displayed != 25) {
-    /* ---- Overscan rendering path ----
-     * The CRTC MA counter advances by chars_per_row per character row,
-     * not by the standard 40.  This changes the VRAM-to-screen mapping.
-     * We iterate through the CRTC display list and render to explicit
-     * framebuffer coordinates, centering/clipping to fit 320×200. */
+    /* ---- Overscan / non-standard rendering path ---- */
     int bytes_per_row = chars_per_row * 2;
     int display_chars = (chars_per_row > 40) ? 40 : chars_per_row;
     int skip_chars_left = (chars_per_row > 40) ? (chars_per_row - 40) / 2 : 0;

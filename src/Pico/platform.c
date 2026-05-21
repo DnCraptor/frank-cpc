@@ -493,17 +493,45 @@ void cpc_pico_main(void) {
         /* If autorun= is set in cpc.ini, use it verbatim (Enter appended).
          * Fallback: if any disk is mounted (by any autoload path), try
          * RUN"DISC + 30s wait + Space — works for most autobooting CPC games. */
-        char cmd[72];
+        char cmd[128];
         if (g_cpc_settings.autorun[0]) {
-            snprintf(cmd, sizeof(cmd), "%s\r", g_cpc_settings.autorun);
-            printf("autorun: %s\n", cmd);
+            /* Unescape \n → 0x0A (10s wait) and \r → Enter in the autorun string */
+            const char *src = g_cpc_settings.autorun;
+            int di = 0;
+            while (*src && di < (int)sizeof(cmd) - 2) {
+                if (src[0] == '\\' && src[1] == 'n') { cmd[di++] = '\n'; src += 2; }
+                else if (src[0] == '\\' && src[1] == 'r') { cmd[di++] = '\r'; src += 2; }
+                else cmd[di++] = *src++;
+            }
+            cmd[di++] = '\r';
+            /* Exolon needs the trainer answers, then several Space presses
+             * from the planets title before the options menu appears. */
+            const char *disk = cpc_mounted_disk_name(0);
+            if (disk && (strstr(disk, "xolon") || strstr(disk, "XOLON"))
+                && di < (int)sizeof(cmd) - 16) {
+                cmd[di++] = '\n'; /* wait for trainer */
+                cmd[di++] = 'y'; cmd[di++] = 'y'; cmd[di++] = 'y'; cmd[di++] = 'y';
+                cmd[di++] = '\n'; /* wait for title */
+                cmd[di++] = ' '; cmd[di++] = ' '; cmd[di++] = ' ';
+                cmd[di++] = ' '; cmd[di++] = ' ';
+                cmd[di++] = '\n'; /* wait on options menu */
+            }
+            cmd[di] = '\0';
+            printf("autorun: %s\n", g_cpc_settings.autorun);
             cpc_autotype_set(cmd, 200);
         } else if (cpc_mounted_disk_name(0)) {
-            /* No autorun= in cpc.ini but a disk is mounted.
-             * Default command covers Prince of Persia; override with
-             * autorun= in /cpc/cpc.ini for other games. */
-            printf("autorun: disk mounted, typing RUN\"PRINCE\n");
-            cpc_autotype_set("RUN\"PRINCE\r\n\n\n ", 200);
+            const char *disk = cpc_mounted_disk_name(0);
+            /* Detect Exolon trainer disk — answer Y to 4 trainer questions */
+            int is_exolon = (strstr(disk, "xolon") || strstr(disk, "XOLON"));
+            if (is_exolon) {
+                printf("autorun: Exolon detected, typing run+trainer bypass\n");
+                /* RUN"EXOLON + Enter, wait 10s, Y×4, wait 10s,
+                 * Space×5 from planets title, then wait on options menu. */
+                cpc_autotype_set("RUN\"EXOLON\r\nyyyy\n     \n", 200);
+            } else {
+                printf("autorun: disk mounted, typing RUN\"PRINCE\n");
+                cpc_autotype_set("RUN\"PRINCE\r\n\n\n ", 200);
+            }
         }
     }
 

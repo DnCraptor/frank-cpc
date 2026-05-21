@@ -35,6 +35,8 @@ FILE *DebugFP;
 void PatchZ80(register Z80 *R) { (void)R; }
 void WriteRcFile(void) {}
 
+byte irq_reset_pending = 0;
+
 void InitCPC(int Start) {
   (void)Start;
   CPCMaxMem = 128;
@@ -48,6 +50,7 @@ void InitCPC(int Start) {
   sprintf(Language, "eng");
   PrinterCmdLine[0] = 0;
 }
+
 
 word LoopZ80(register Z80 *R) {
   static int i;
@@ -63,14 +66,17 @@ word LoopZ80(register Z80 *R) {
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
 
-  /* Record the current screen mode at each interrupt period boundary.
-   * Used at frame end to determine the correct display-time mode. */
   pico_record_period_state(IRQCount - 1);
-
-  /* Process keyboard at every interrupt period (6×/frame = 300Hz)
-   * for responsive input.  The direct matrix approach has no state
-   * coupling, so calling it frequently is safe and reduces latency. */
   cpc_ps2_feed_events();
+
+  /* Gate Array IRQ timer: skip one period when MRER bit 4 reset pending. */
+  int fire_irq;
+  if (irq_reset_pending) {
+    irq_reset_pending = 0;
+    fire_irq = 0;
+  } else {
+    fire_irq = 1;
+  }
 
   /* One CPC video frame = 6 CRTC interrupt periods (300Hz/50fps = 6). */
   if (IRQCount == 6) {
@@ -150,7 +156,7 @@ word LoopZ80(register Z80 *R) {
   }
 
   if (ExitCPC == TRUE) return INT_QUIT;
-  return INT_IRQ;
+  return fire_irq ? INT_IRQ : INT_NONE;
 }
 
 int RunZ80_cpc(void) {
@@ -163,7 +169,8 @@ int RunZ80_cpc(void) {
     z80_arm_exec(CPUZyklenBisInt);
     word result = LoopZ80(&cpu);
     if (result == INT_QUIT) break;
-    IntZ80(&cpu, result);
+    if (result != INT_NONE)
+      IntZ80(&cpu, result);
   }
   return 0;
 }

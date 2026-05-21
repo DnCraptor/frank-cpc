@@ -122,6 +122,7 @@ case IN_H_xC:  M_IN(R->HL.B.h);break;
 case IN_L_xC:  M_IN(R->HL.B.l);break;
 case IN_A_xC:  M_IN(R->AF.B.h);break;
 case IN_F_xC:  M_IN(J.B.l);break;
+case OUT_xC_0: OutZ80(R->BC.W,0);break;
 
 case OUT_xC_B: OutZ80(R->BC.W,R->BC.B.h);break;
 case OUT_xC_C: OutZ80(R->BC.W,R->BC.B.l);break;

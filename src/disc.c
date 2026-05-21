@@ -605,6 +605,13 @@ byte ReadFDCStatus (void) {
 /**                                                                 **/
 /*********************************************************************/
 void WriteDskImage (int DrvNum) {
+#ifdef PICO_BUILD
+  /* Disk images are read-only on Pico — skip write-back to prevent
+   * SD card corruption. */
+  printf("WriteDskImage: skipped (read-only mode)\n");
+  dsk[DrvNum].fid = -1;
+  return;
+#endif
   if (dsk[DrvNum].fid>0) {
     printf ("Write disc image: %s", dsk[DrvNum].ImageName);
     dsk[DrvNum].fid = open (dsk[DrvNum].ImageName, O_RDWR);

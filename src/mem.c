@@ -69,8 +69,10 @@ int InitMem (void){
     RAM = (byte *)CPC_LARGE_ALLOC(j);
   if (RAM == NULL)
     return 0;
-  for (i=0; i<=65535; i++)
-    RAM[i]=0;
+  /* Clear ALL allocated RAM, including extended banks.
+   * Previously only 64KB was cleared, leaving extended RAM
+   * uninitialised — games using bank switching would read garbage. */
+  memset(RAM, 0, j);
 
   for (i=0; i<=255; i++)
       ROMPresent[i]=FALSE;

@@ -2570,10 +2570,9 @@ op_87_add_a_a:
     lsrs    r0, r5, #8         /* r0 = A */
     uxtb    r0, r0
     uxtb    r1, r1
-    adds    r2, r0, r1         /* r2 = A+op, carry in CPSR */
-    uxtb    r2, r2
-    movs    r3, #0
-    adc     r3, r3, #0         /* r3 = carry (0/1) */
+    add     r2, r0, r1         /* r2 = A+op (9-bit result) */
+    lsrs    r3, r2, #8         /* r3 = carry (bit 8) */
+    uxtb    r2, r2             /* truncate to 8 bits */
     mov     r12, r3            /* flags start with C */
 
     /* Z,S from result */

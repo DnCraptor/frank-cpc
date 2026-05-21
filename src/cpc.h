@@ -53,6 +53,10 @@ extern int tmp1, tmp2, tmp3;
 extern int NoDebug;
 extern FILE *DebugFP;
 
+/* Gate Array IRQ timer reset flag.  Set by io.c when MRER bit 4 is written;
+ * cleared by LoopZ80 to skip one IRQ period (~52 HSYNCs) for raster sync. */
+extern byte irq_reset_pending;
+
 void WriteRcFile(void);
 void InitCPC(int Start);
 

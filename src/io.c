@@ -36,6 +36,15 @@ byte PioStatus;
 word AlterScrOffs;
 byte Customer;
 
+#ifdef PICO_BUILD
+/* Display mode tracks the game's intended screen mode, filtering out
+ * writes from the CPC firmware interrupt handler.  The firmware handler
+ * (at RAM 0xB900-0xBA84 and ROM 0x0000-0x0043) writes its own tracked
+ * mode on every interrupt, overwriting what the game set.  DisplayMode
+ * is used for rendering; ScreenMode stays as the raw hardware register. */
+unsigned int DisplayMode = 1;
+#endif
+
 /*********************************************************************************/
 
 void InitIO (void) {
@@ -59,6 +68,40 @@ void OutZ80 (register word Port, register byte Value) {
         UpperBlockIsRAM = Value & 8;
         LowerBlockIsRAM = Value & 4;
         ScreenMode = Value & 3;
+#ifdef PICO_BUILD
+        /* Track when the game has taken over from the firmware.
+         * Once we see an MRER write with both ROMs disabled from a
+         * non-firmware PC, we know the game owns the interrupt handler
+         * and all subsequent MRER writes should update DisplayMode. */
+        {
+          word pc = cpu.PC.W;
+          static int game_took_over = 0;
+          if (!game_took_over && (Value & 0x0C) == 0x0C &&
+              pc > 0x0043 && (pc < 0xB900 || pc > 0xBA84)) {
+            game_took_over = 1;
+            /* Dump B941 before decompressor runs */
+            printf("[PRE-DECOMP] @0038=");
+            for (int _k=0;_k<4;_k++) printf("%02X",RAM[0x0038+_k]);
+            printf(" @B941=");
+            for (int _k=0;_k<16;_k++) printf("%02X",RAM[0xB941+_k]);
+            printf(" IFF=%02X\n", cpu.IFF);
+          }
+          int is_fw = !game_took_over &&
+                      ((pc >= 0xB900 && pc <= 0xBA84) || pc <= 0x0043);
+          static uint32_t mrer_dbg_cnt = 0;
+          if (mrer_dbg_cnt < 100 || !is_fw) {
+            if (mrer_dbg_cnt < 2000) {
+              mrer_dbg_cnt++;
+              printf("[MRER] pc=%04X v=%02X m=%d fw=%d gto=%d\n",
+                     pc, Value, Value & 3, is_fw, game_took_over);
+            }
+          }
+          if (!is_fw)
+            DisplayMode = Value & 3;
+        }
+#endif
+        /* MRER bit 4: reset Gate Array IRQ timer (used by raster games). */
+        if (Value & 0x10) irq_reset_pending = 1;
         ok = TRUE;
         break;
 
