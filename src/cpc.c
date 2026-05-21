@@ -119,6 +119,7 @@ word LoopZ80(register Z80 *R) {
       }
     }
     ChangeInk = FALSE;
+
     cpc_frame_present();
     IRQCount = 0;
     pico_reset_ink_events();

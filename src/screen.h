@@ -55,6 +55,7 @@ void pico_debug_ink_events(void);
 void pico_record_crtc_event(void);
 void pico_reset_crtc_events(void);
 int  pico_has_crtc_events(void);
+int  pico_get_crtc_event_count(void);
 void pico_debug_crtc_events(void);
 #endif
 

@@ -537,9 +537,9 @@ void cpc_pico_main(void) {
             int is_exolon = (strstr(disk, "xolon") || strstr(disk, "XOLON"));
             if (is_exolon) {
                 printf("autorun: Exolon detected, typing run+trainer bypass\n");
-                /* RUN"EXOLON + Enter, wait 10s, Y×4, wait 10s,
-                 * Space×5 from planets title, then wait on options menu. */
-                cpc_autotype_set("RUN\"EXOLON\r\nyyyy\n     \n", 200);
+                /* RUN"EXOLON + Enter, wait 10s, Y×4 for trainer questions,
+                   wait 10s, then space to advance past title to planets. */
+                cpc_autotype_set("RUN\"EXOLON\r\nyyyy\n \n", 200);
             } else {
                 printf("autorun: disk mounted, typing RUN\"PRINCE\n");
                 cpc_autotype_set("RUN\"PRINCE\r\n\n\n ", 200);
