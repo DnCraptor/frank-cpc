@@ -28,6 +28,7 @@
 #include "HDMI.h"
 #include "psram_init.h"
 #include "psram_allocator.h"
+#include "crash_handler.h"
 #include "ff.h"
 #include "ps2kbd_wrapper.h"
 #include "ps2.h"
@@ -149,11 +150,16 @@ int main(void) {
 
     for (int i = 0; i < 10; ++i) sleep_ms(500);
 
+    crash_handler_check_and_print();
+
     printf("\n========================================\n");
     printf("  frank-cpc — CPC emulator for RP2350\n");
     printf("  version %s  board M2\n", FRANK_CPC_VERSION);
     printf("  cpu=%lu MHz\n", clock_get_hz(clk_sys) / 1000000u);
     printf("========================================\n");
+
+    crash_handler_install();
+    printf("Crash handler installed\n");
 
 #ifdef PICO_DEFAULT_LED_PIN
     gpio_init(PICO_DEFAULT_LED_PIN);
@@ -180,8 +186,12 @@ int main(void) {
     printf("PS/2 keyboard initialized\n");
 
 #ifdef HDMI_PIO_AUDIO
-    /* HDMI_PIO_AUDIO: skip VGA probe — always HDMI with embedded audio. */
-    printf("Video: HDMI_PIO_AUDIO driver\n");
+    /* HDMI_PIO_AUDIO: VGA autodetect, then HDMI or VGA init. */
+    {
+        int link = testPins(HDMI_BASE_PIN, HDMI_BASE_PIN + 1);
+        SELECT_VGA = (link == 0) || (link == 0x1F);
+        printf("Video: HDMI_PIO_AUDIO link=0x%02X -> %s\n", (unsigned)link, SELECT_VGA ? "VGA" : "HDMI");
+    }
     graphics_init(g_out_HDMI);
     graphics_set_buffer(SCREEN[0]);
     graphics_set_res(FB_W, FB_H);
@@ -189,9 +199,13 @@ int main(void) {
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
     printf("Video initialized (%dx%d)\n", FB_W, FB_H);
 
-    multicore_launch_core1(frank_hdmi_run_core1);
-    sleep_ms(50);
-    printf("HDMI audio started (32000 Hz, data-island)\n");
+    if (!SELECT_VGA) {
+        multicore_launch_core1(frank_hdmi_run_core1);
+        sleep_ms(50);
+        printf("HDMI audio started (32000 Hz, data-island)\n");
+    } else {
+        printf("VGA mode — HDMI audio not available\n");
+    }
 #else
     /* HDMI_PIO: original PIO HDMI + I2S audio path. */
     {

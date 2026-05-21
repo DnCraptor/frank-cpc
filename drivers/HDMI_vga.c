@@ -103,7 +103,7 @@ extern uint8_t *get_line_buffer(int line);
  * also writes this shadow so the VGA ISR can read the framebuffer from
  * SRAM without calling across the translation unit boundary. Exposed
  * (non-static) so HDMI.c can write to it. */
-uint8_t * __scratch_y("vga_fb") vga_fb = NULL;
+uint8_t * __not_in_flash("vga") vga_fb = NULL;
 
 /* Video mode table (defined in HDMI.c): shares the 640x480@60Hz entry. */
 extern struct video_mode_t graphics_get_video_mode(int mode);
@@ -114,8 +114,8 @@ static int get_video_mode(void) { return 0; }
  * XIP cache badly enough to starve polled SPI on core 0 (SD card reads
  * time out). We populate these once in init_vga() from
  * graphics_get_video_mode() and read them from SRAM in the ISR. */
-static int __scratch_y("vga_mode_h_total") vga_h_total = 524;
-static int __scratch_y("vga_mode_h_width") vga_h_width = 480;
+static int __not_in_flash("vga") vga_h_total = 524;
+static int __not_in_flash("vga") vga_h_width = 480;
 
 /* VGA PIO program: shift 8 bits out per FIFO byte. */
 static uint16_t pio_program_VGA_instructions[] = {
@@ -131,39 +131,40 @@ static const struct pio_program pio_program_VGA = {
 };
 
 /* Line pattern ping-pong buffers + palette. Hot-path state lives in
- * __scratch_y so the ISR reads it from SRAM. */
-static uint32_t * __scratch_y("vga_lp")   lines_pattern[4];
-static uint16_t  __scratch_y("vga_pal")   pallette[256];
+ * SRAM (__not_in_flash) so the ISR never hits XIP cache. */
+static uint32_t * __not_in_flash("vga")   lines_pattern[4];
+static uint16_t  __not_in_flash("vga")   pallette[256];
 static uint32_t *lines_pattern_data = NULL;
 static int _SM_VGA = -1;
 
-static int __scratch_y("vga_vs_b") line_VS_begin = 490;
-static int __scratch_y("vga_vs_e") line_VS_end   = 491;
-static int __scratch_y("vga_shft") shift_picture = 0;
+static int __not_in_flash("vga") line_VS_begin = 490;
+static int __not_in_flash("vga") line_VS_end   = 491;
+static int __not_in_flash("vga") shift_picture = 0;
 
-static int __scratch_y("vga_vls") visible_line_size = 320;
+static int __not_in_flash("vga") visible_line_size = 320;
 
-static int __scratch_y("vga_cc") dma_chan_ctrl_vga;
-static int __scratch_y("vga_c")  dma_chan_vga;
+static int __not_in_flash("vga") dma_chan_ctrl_vga;
+static int __not_in_flash("vga")  dma_chan_vga;
 
-static uint32_t __scratch_y("vga_bg") bg_color[2];
+static uint32_t __not_in_flash("vga") bg_color[2];
 static uint16_t palette16_mask = 0;
 
-static enum graphics_mode_t __scratch_y("vga_mode") vga_graphics_mode = GRAPHICSMODE_DEFAULT;
+static enum graphics_mode_t __not_in_flash("vga") vga_graphics_mode = GRAPHICSMODE_DEFAULT;
 
-static uint32_t frame_number = 0;
-static uint32_t __scratch_y("vga_sl") screen_line = 0;
+uint32_t vga_frame_number = 0;
+static uint32_t __not_in_flash("vga") screen_line = 0;
 
 /* ==========================================================================
  * DMA ISR: runs in ~32 µs windows (per-line) and rewrites the next line
  * buffer based on current screen_line position (sync / image / back porch).
  *
- * Placed in SRAM (__scratch_y) like the HDMI ISR — the VGA path fires at
+ * Placed in SRAM (__not_in_flash) — the VGA path fires at
  * ~31 kHz, so a flash-resident ISR causes enough XIP-cache thrashing to
- * starve polled SPI traffic on core 0 (FatFS directory reads time out
- * after the scanner starts running).
+ * starve polled SPI traffic on core 0.  Using regular SRAM instead of
+ * __scratch_y avoids competing with the stack for the 4 KB scratch_y
+ * region (frank-hdmi-sound also places data there).
  * ========================================================================== */
-static void __scratch_y("vga_driver") dma_handler_VGA(void) {
+static void __not_in_flash_func(dma_handler_VGA)(void) {
     /* Frank-msx uses DMA_IRQ_1 for the video path. */
     dma_hw->ints1 = 1u << dma_chan_ctrl_vga;
     screen_line++;
@@ -173,7 +174,7 @@ static void __scratch_y("vga_driver") dma_handler_VGA(void) {
 
     if (screen_line == h_total) {
         screen_line = 0;
-        frame_number++;
+        vga_frame_number++;
     }
 
     if (screen_line >= h_width) {
@@ -480,6 +481,19 @@ static void graphics_init_vga(void) {
     }
     irq_set_enabled(VGA_DMA_IRQ, true);
     dma_start_channel_mask(1u << dma_chan_vga);
+}
+
+/* Diagnostic: expose DMA channel state for VGA debugging. */
+void vga_diag(uint32_t *out_ctrl_ch, uint32_t *out_data_ch, bool *out_ctrl_busy, bool *out_data_busy) {
+    if (_SM_VGA < 0) {
+        *out_ctrl_ch = *out_data_ch = 0xFFFF;
+        *out_ctrl_busy = *out_data_busy = false;
+        return;
+    }
+    *out_ctrl_ch = (uint32_t)dma_chan_ctrl_vga;
+    *out_data_ch = (uint32_t)dma_chan_vga;
+    *out_ctrl_busy = dma_channel_is_busy(dma_chan_ctrl_vga);
+    *out_data_busy = dma_channel_is_busy(dma_chan_vga);
 }
 
 /* ==========================================================================

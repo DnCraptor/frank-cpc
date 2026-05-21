@@ -53,7 +53,9 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
 
     add_library(drivers
         drivers/HDMI_audio.c
+        drivers/HDMI_vga.c
         drivers/test_pins.c
+        drivers/crash_handler.c
         drivers/psram_init.c
         drivers/psram_allocator.c
         drivers/dlmalloc.c
@@ -79,6 +81,8 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
         hardware_clocks
         hardware_irq
         hardware_vreg
+        hardware_exception
+        hardware_watchdog
         frank_hdmi_sound
     )
 
@@ -89,6 +93,7 @@ else()
         drivers/hdmi_scanline.S
         drivers/HDMI_vga.c
         drivers/test_pins.c
+        drivers/crash_handler.c
         drivers/audio.c
         drivers/audio_i2s_opt.S
         drivers/psram_init.c
@@ -117,6 +122,8 @@ else()
         hardware_clocks
         hardware_irq
         hardware_vreg
+        hardware_exception
+        hardware_watchdog
     )
 endif()
 
