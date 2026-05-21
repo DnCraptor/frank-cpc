@@ -444,7 +444,7 @@ void RedrawScreenImage(void) {
   static uint8_t display_mode[CPC_FB_ROWS];
   pico_build_display_modes(display_mode);
 
-  memset(cpc_fb, 0, sizeof(cpc_fb));
+  memset(cpc_fb, AktInk[16], sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   g_in_redraw = 1;
 
@@ -600,7 +600,7 @@ void RedrawDirtyRows(void) {
   if (!any) return;
 
   for (int r = 0; r < CPC_FB_ROWS; r++)
-    if (was_dirty[r]) memset(cpc_fb[r], 0, CPC_FB_WIDTH);
+    if (was_dirty[r]) memset(cpc_fb[r], AktInk[16], CPC_FB_WIDTH);
 
   g_in_redraw = 1;
   for (int bank = 0; bank < 8; bank++) {

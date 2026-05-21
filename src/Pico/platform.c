@@ -88,6 +88,18 @@ void cpc_frame_present(void) {
     extern byte AktInk[];
     const uint8_t border = (uint8_t)AktInk[16];
 
+    /* Update hardware background color for left/right borders */
+    {
+        static uint8_t last_border = 0xFF;
+        if (border != last_border) {
+            last_border = border;
+            uint32_t c = ((uint32_t)scale6to8(ColorRGBs[border][0]) << 16)
+                       | ((uint32_t)scale6to8(ColorRGBs[border][1]) << 8)
+                       |  (uint32_t)scale6to8(ColorRGBs[border][2]);
+            graphics_set_bgcolor(c);
+        }
+    }
+
     /* Centre 200 active rows in 240 screen rows: 20 rows top + 200 + 20 bottom */
     const int top_pad = (CPC_SCREEN_LINES - CPC_FB_HEIGHT) / 2; /* = 20 */
 
