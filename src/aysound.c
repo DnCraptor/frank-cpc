@@ -29,6 +29,9 @@ static uint32_t noise_seed = 1;
 
 int init_dsp(void) {
     resetAYRegister();
+#ifdef HDMI_PIO_AUDIO
+    sample_rate  = 32000;          /* HDMI data-island audio rate */
+#endif
     nb_samples   = sample_rate / 50;       /* 22050/50 = 441 */
     magic_number = sample_rate / 125000.0;
     /* Full scale: worst case 3 channels at max volume ≈ (480/256)*32767 ≈ 61440,

@@ -28,10 +28,15 @@
 #include "HDMI.h"
 #include "psram_init.h"
 #include "psram_allocator.h"
-#include "audio.h"
 #include "ff.h"
 #include "ps2kbd_wrapper.h"
 #include "ps2.h"
+
+#ifdef HDMI_PIO_AUDIO
+#include "frank_hdmi.h"
+#else
+#include "audio.h"
+#endif
 
 #define FB_W CPC_FB_WIDTH
 #define FB_H CPC_FB_HEIGHT
@@ -57,6 +62,13 @@ static void __no_inline_not_in_flash_func(set_flash_timings)(int cpu_mhz, int fl
                         | ((uint32_t)divisor << QMI_M0_TIMING_CLKDIV_LSB);
 }
 
+#ifdef HDMI_PIO_AUDIO
+/* HDMI_PIO_AUDIO: audio_ring_push_mono and audio_ring_free are
+ * provided by HDMI_audio.c which routes samples to the HDMI
+ * data-island ring via frank_hdmi_audio_write().  The I2S ring
+ * buffer and Core 1 render loop are not needed. */
+#else
+/* HDMI_PIO: I2S audio ring buffer + Core 1 render loop. */
 #define AUDIO_SAMPLE_RATE       44100
 #define AUDIO_FRAMES_PER_CHUNK  882
 #define AUDIO_RING_FRAMES       (1u << 12)
@@ -118,6 +130,7 @@ void __time_critical_func(render_core)(void) {
         i2s_dma_write(&i2s_cfg, (const int16_t *)chunk);
     }
 }
+#endif /* !HDMI_PIO_AUDIO */
 
 extern void cpc_pico_main(void);
 
@@ -166,6 +179,21 @@ int main(void) {
     ps2kbd_init();
     printf("PS/2 keyboard initialized\n");
 
+#ifdef HDMI_PIO_AUDIO
+    /* HDMI_PIO_AUDIO: skip VGA probe — always HDMI with embedded audio. */
+    printf("Video: HDMI_PIO_AUDIO driver\n");
+    graphics_init(g_out_HDMI);
+    graphics_set_buffer(SCREEN[0]);
+    graphics_set_res(FB_W, FB_H);
+    graphics_set_shift((320 - FB_W) / 2, 0);
+    graphics_set_mode(GRAPHICSMODE_DEFAULT);
+    printf("Video initialized (%dx%d)\n", FB_W, FB_H);
+
+    multicore_launch_core1(frank_hdmi_run_core1);
+    sleep_ms(50);
+    printf("HDMI audio started (32000 Hz, data-island)\n");
+#else
+    /* HDMI_PIO: original PIO HDMI + I2S audio path. */
     {
         int link = testPins(HDMI_BASE_PIN, HDMI_BASE_PIN + 1);
         SELECT_VGA = (link == 0) || (link == 0x1F);
@@ -181,6 +209,7 @@ int main(void) {
     multicore_launch_core1(render_core);
     while (!core1_ready) tight_loop_contents();
     printf("I2S audio started (44100 Hz)\n");
+#endif
 
     cpc_pico_main();
 

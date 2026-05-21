@@ -1,0 +1,3 @@
+[submodule "frank-hdmi-sound"]
+	path = frank-hdmi-sound
+	url = https://github.com/rh1tech/frank-hdmi-audio.git

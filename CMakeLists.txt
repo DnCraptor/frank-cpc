@@ -25,7 +25,10 @@ else()
     set(CPU_VOLTAGE "VREG_VOLTAGE_1_50")
 endif()
 
-message(STATUS "frank-cpc  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}")
+set(HDMI_DRIVER "HDMI_PIO" CACHE STRING "HDMI driver: HDMI_PIO (I2S audio) or HDMI_PIO_AUDIO (HDMI audio)")
+set_property(CACHE HDMI_DRIVER PROPERTY STRINGS "HDMI_PIO" "HDMI_PIO_AUDIO")
+
+message(STATUS "frank-cpc  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}  HDMI: ${HDMI_DRIVER}")
 
 include(pico_sdk_import.cmake)
 
@@ -43,42 +46,82 @@ add_subdirectory(drivers/fatfs)
 add_subdirectory(drivers/sdcard)
 add_subdirectory(drivers/ps2)
 
-add_library(drivers
-    drivers/HDMI.c
-    drivers/hdmi_scanline.S
-    drivers/HDMI_vga.c
-    drivers/test_pins.c
-    drivers/audio.c
-    drivers/audio_i2s_opt.S
-    drivers/psram_init.c
-    drivers/psram_allocator.c
-    drivers/dlmalloc.c
-    drivers/uart_logging.c
-)
+if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
+    # --- HDMI_PIO_AUDIO: frank-hdmi-sound library (HDMI-embedded audio) ---
+    set(FRANK_HDMI_SM_CLKDIV "1" CACHE STRING "" FORCE)
+    add_subdirectory(frank-hdmi-sound/src)
+
+    add_library(drivers
+        drivers/HDMI_audio.c
+        drivers/test_pins.c
+        drivers/psram_init.c
+        drivers/psram_allocator.c
+        drivers/dlmalloc.c
+        drivers/uart_logging.c
+    )
+
+    target_include_directories(drivers PUBLIC drivers src)
+    target_compile_definitions(drivers PUBLIC
+        BOARD_M2
+        PLATFORM_M2=1
+        HDMI_PIO_AUDIO=1
+    )
+    target_compile_definitions(drivers PRIVATE
+        PSRAM_MAX_FREQ_MHZ=${PSRAM_SPEED}
+    )
+    target_link_libraries(drivers
+        pico_stdlib
+        hardware_dma
+        hardware_pio
+        hardware_pwm
+        hardware_spi
+        hardware_gpio
+        hardware_clocks
+        hardware_irq
+        hardware_vreg
+        frank_hdmi_sound
+    )
+
+else()
+    # --- HDMI_PIO: original PIO HDMI driver (I2S audio) ---
+    add_library(drivers
+        drivers/HDMI.c
+        drivers/hdmi_scanline.S
+        drivers/HDMI_vga.c
+        drivers/test_pins.c
+        drivers/audio.c
+        drivers/audio_i2s_opt.S
+        drivers/psram_init.c
+        drivers/psram_allocator.c
+        drivers/dlmalloc.c
+        drivers/uart_logging.c
+    )
+
+    target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
+    target_compile_definitions(drivers PUBLIC
+        BOARD_M2
+        PLATFORM_M2=1
+        HDMI_PIO=1
+    )
+    target_compile_definitions(drivers PRIVATE
+        PSRAM_MAX_FREQ_MHZ=${PSRAM_SPEED}
+    )
+    pico_generate_pio_header(drivers ${CMAKE_CURRENT_LIST_DIR}/drivers/audio_i2s.pio)
+    target_link_libraries(drivers
+        pico_stdlib
+        hardware_dma
+        hardware_pio
+        hardware_pwm
+        hardware_spi
+        hardware_gpio
+        hardware_clocks
+        hardware_irq
+        hardware_vreg
+    )
+endif()
 
 set_source_files_properties(drivers/dlmalloc.c PROPERTIES COMPILE_DEFINITIONS
     "ONLY_MSPACES=1;HAVE_MMAP=0;HAVE_MORECORE=0;NO_MALLOC_STATS=1;USE_LOCKS=0;ABORT_ON_ASSERT_FAILURE=0;MALLOC_FAILURE_ACTION=;LACKS_SYS_MMAN_H=1;LACKS_UNISTD_H=1;LACKS_SYS_PARAM_H=1")
-
-target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
-target_compile_definitions(drivers PUBLIC
-    BOARD_M2
-    PLATFORM_M2=1
-)
-target_compile_definitions(drivers PRIVATE
-    PSRAM_MAX_FREQ_MHZ=${PSRAM_SPEED}
-)
-pico_generate_pio_header(drivers ${CMAKE_CURRENT_LIST_DIR}/drivers/audio_i2s.pio)
-target_link_libraries(drivers
-    pico_stdlib
-    hardware_dma
-    hardware_pio
-    hardware_pwm
-    hardware_spi
-    hardware_gpio
-    hardware_clocks
-    hardware_irq
-    hardware_vreg
-)
 
 set(CPC_CORE
     src/Z80/Z80.c
@@ -146,6 +189,11 @@ target_compile_definitions(frank-cpc PRIVATE
     SDCARD_PIN_SPI0_MOSI=7
     SDCARD_PIN_SPI0_MISO=4
 )
+
+if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
+    target_compile_definitions(frank-cpc PRIVATE HDMI_PIO_AUDIO=1)
+    target_include_directories(frank-cpc PRIVATE frank-hdmi-sound/src)
+endif()
 
 target_compile_options(frank-cpc PRIVATE
     -O2
