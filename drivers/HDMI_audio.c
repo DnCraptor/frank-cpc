@@ -184,12 +184,18 @@ void set_palette(uint8_t n)  { (void)n;   }
 /* Audio: route mono samples into HDMI data-island ring               */
 /* ------------------------------------------------------------------ */
 
+/* I2S ring buffer (defined in main.c) — used as VGA audio fallback. */
+extern unsigned i2s_ring_push(const int16_t *samples, unsigned count);
+extern unsigned i2s_ring_free(void);
+
 /*
  * audio_ring_push_mono — called by aysound.c to push one frame of AY
- * audio.  Converts mono int16 to stereo and pushes into the HDMI
- * data-island ring at 32 kHz.
+ * audio.  Routes to HDMI data-island (32 kHz) or I2S ring (44.1 kHz)
+ * depending on whether VGA was detected at boot.
  */
 unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
+    if (SELECT_VGA)
+        return i2s_ring_push(samples, count);
     int16_t stereo[640 * 2];
     if (count > 640) count = 640;
     for (unsigned i = 0; i < count; i++) {
@@ -200,5 +206,7 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
 }
 
 unsigned audio_ring_free(void) {
+    if (SELECT_VGA)
+        return i2s_ring_free();
     return frank_hdmi_audio_free();
 }

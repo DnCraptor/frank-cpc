@@ -7,7 +7,9 @@
 # build.sh - build frank-cpc for RP2350 (M2 platform)
 #
 # Usage: ./build.sh [CPU_MHZ] [HDMI_DRIVER]
-#   HDMI_DRIVER: HDMI_PIO (default, I2S audio) or HDMI_PIO_AUDIO (HDMI audio)
+#   HDMI_DRIVER: HDMI_PIO (default, I2S audio)
+#                HDMI_PIO_AUDIO (HDMI audio)
+#                VGA_HSTX (HSTX VGA + I2S audio on Core 0)
 #
 set -e
 

@@ -25,8 +25,8 @@ else()
     set(CPU_VOLTAGE "VREG_VOLTAGE_1_50")
 endif()
 
-set(HDMI_DRIVER "HDMI_PIO" CACHE STRING "HDMI driver: HDMI_PIO (I2S audio) or HDMI_PIO_AUDIO (HDMI audio)")
-set_property(CACHE HDMI_DRIVER PROPERTY STRINGS "HDMI_PIO" "HDMI_PIO_AUDIO")
+set(HDMI_DRIVER "HDMI_PIO" CACHE STRING "HDMI driver: HDMI_PIO (I2S audio) or HDMI_PIO_AUDIO (HDMI audio) or VGA_HSTX (HSTX VGA + I2S)")
+set_property(CACHE HDMI_DRIVER PROPERTY STRINGS "HDMI_PIO" "HDMI_PIO_AUDIO" "VGA_HSTX")
 
 message(STATUS "frank-cpc  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}  HDMI: ${HDMI_DRIVER}")
 
@@ -56,6 +56,8 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
         drivers/HDMI_vga.c
         drivers/test_pins.c
         drivers/crash_handler.c
+        drivers/audio.c
+        drivers/audio_i2s_opt.S
         drivers/psram_init.c
         drivers/psram_allocator.c
         drivers/dlmalloc.c
@@ -71,6 +73,7 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
     target_compile_definitions(drivers PRIVATE
         PSRAM_MAX_FREQ_MHZ=${PSRAM_SPEED}
     )
+    pico_generate_pio_header(drivers ${CMAKE_CURRENT_LIST_DIR}/drivers/audio_i2s.pio)
     target_link_libraries(drivers
         pico_stdlib
         hardware_dma
@@ -84,6 +87,47 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
         hardware_exception
         hardware_watchdog
         frank_hdmi_sound
+    )
+
+elseif(HDMI_DRIVER STREQUAL "VGA_HSTX")
+    # --- VGA_HSTX: DispHSTX library (VGA via HSTX) + I2S audio ---
+    add_subdirectory(drivers/disphstx)
+
+    add_library(drivers
+        drivers/HDMI_vga_hstx.c
+        drivers/crash_handler.c
+        drivers/audio.c
+        drivers/audio_i2s_opt.S
+        drivers/psram_init.c
+        drivers/psram_allocator.c
+        drivers/dlmalloc.c
+        drivers/uart_logging.c
+    )
+
+    target_include_directories(drivers PUBLIC drivers src)
+    target_compile_definitions(drivers PUBLIC
+        BOARD_M2
+        PLATFORM_M2=1
+        VGA_HSTX=1
+    )
+    target_compile_definitions(drivers PRIVATE
+        PSRAM_MAX_FREQ_MHZ=${PSRAM_SPEED}
+    )
+    pico_generate_pio_header(drivers ${CMAKE_CURRENT_LIST_DIR}/drivers/audio_i2s.pio)
+    target_link_libraries(drivers
+        pico_stdlib
+        pico_multicore
+        hardware_dma
+        hardware_pio
+        hardware_pwm
+        hardware_spi
+        hardware_gpio
+        hardware_clocks
+        hardware_irq
+        hardware_vreg
+        hardware_exception
+        hardware_watchdog
+        disphstx
     )
 
 else()
@@ -200,6 +244,8 @@ target_compile_definitions(frank-cpc PRIVATE
 if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
     target_compile_definitions(frank-cpc PRIVATE HDMI_PIO_AUDIO=1)
     target_include_directories(frank-cpc PRIVATE frank-hdmi-sound/src)
+elseif(HDMI_DRIVER STREQUAL "VGA_HSTX")
+    target_compile_definitions(frank-cpc PRIVATE VGA_HSTX=1)
 endif()
 
 target_compile_options(frank-cpc PRIVATE

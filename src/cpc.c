@@ -134,6 +134,10 @@ word LoopZ80(register Z80 *R) {
 
     cpc_frame_sync();
     crash_handler_feed();
+#ifdef VGA_HSTX
+    extern void i2s_audio_drain(void);
+    i2s_audio_drain();
+#endif
 
     hb_frames++;
     uint32_t skips_now = g_frame_skips;
