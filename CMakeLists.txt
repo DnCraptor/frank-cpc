@@ -45,6 +45,7 @@ string(REPLACE " " "." FRANK_CPC_VERSION_STR "${FRANK_CPC_VERSION_RAW}")
 add_subdirectory(drivers/fatfs)
 add_subdirectory(drivers/sdcard)
 add_subdirectory(drivers/ps2)
+add_subdirectory(drivers/nespad)
 
 if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
     # --- HDMI_PIO_AUDIO: frank-hdmi-sound library (HDMI-embedded audio) ---
@@ -225,6 +226,7 @@ target_include_directories(frank-cpc PRIVATE
     drivers/fatfs
     drivers/sdcard
     drivers/ps2
+    drivers/nespad
 )
 
 target_compile_definitions(frank-cpc PRIVATE
@@ -279,6 +281,7 @@ target_link_libraries(frank-cpc
     fatfs
     drivers
     ps2_driver
+    nespad
 )
 
 pico_enable_stdio_uart(frank-cpc 0)

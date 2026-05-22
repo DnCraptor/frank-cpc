@@ -98,6 +98,22 @@ unsigned i2s_ring_push(const int16_t *samples, unsigned count) {
     return count;
 }
 
+unsigned i2s_ring_push_stereo(const int16_t *samples, unsigned count) {
+    uint32_t prod = g_audio_prod;
+    uint32_t cons = g_audio_cons;
+    uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
+    if (count > free_slots) count = free_slots;
+    for (unsigned i = 0; i < count; ++i) {
+        int16_t l = samples[i * 2];
+        int16_t r = samples[i * 2 + 1];
+        g_audio_ring[(prod + i) & AUDIO_RING_MASK] =
+            ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
+    }
+    __dmb();
+    g_audio_prod = prod + count;
+    return count;
+}
+
 unsigned i2s_ring_free(void) {
     return AUDIO_RING_FRAMES - (g_audio_prod - g_audio_cons);
 }
@@ -169,6 +185,22 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
     return count;
 }
 
+unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
+    uint32_t prod = g_audio_prod;
+    uint32_t cons = g_audio_cons;
+    uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
+    if (count > free_slots) count = free_slots;
+    for (unsigned i = 0; i < count; ++i) {
+        int16_t l = samples[i * 2];
+        int16_t r = samples[i * 2 + 1];
+        g_audio_ring[(prod + i) & AUDIO_RING_MASK] =
+            ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
+    }
+    __dmb();
+    g_audio_prod = prod + count;
+    return count;
+}
+
 unsigned audio_ring_free(void) {
     return AUDIO_RING_FRAMES - (g_audio_prod - g_audio_cons);
 }
@@ -222,6 +254,22 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
         int16_t s = samples[i];
         g_audio_ring[(prod + i) & AUDIO_RING_MASK] =
             ((uint32_t)(uint16_t)s << 16) | (uint16_t)s;
+    }
+    __dmb();
+    g_audio_prod = prod + count;
+    return count;
+}
+
+unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
+    uint32_t prod = g_audio_prod;
+    uint32_t cons = g_audio_cons;
+    uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
+    if (count > free_slots) count = free_slots;
+    for (unsigned i = 0; i < count; ++i) {
+        int16_t l = samples[i * 2];
+        int16_t r = samples[i * 2 + 1];
+        g_audio_ring[(prod + i) & AUDIO_RING_MASK] =
+            ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
     }
     __dmb();
     g_audio_prod = prod + count;

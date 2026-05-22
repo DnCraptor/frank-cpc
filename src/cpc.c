@@ -18,6 +18,8 @@
 #include "tape.h"
 #include "cpc_settings.h"
 
+extern void cpc_nespad_poll(void);
+
 char WorkDirectory[80];
 Z80 cpu;
 char AYRegister[16];
@@ -81,6 +83,7 @@ word LoopZ80(register Z80 *R) {
 
   pico_record_period_state(IRQCount - 1);
   cpc_ps2_feed_events();
+  cpc_nespad_poll();
 
   /* Gate Array IRQ timer: skip one period when MRER bit 4 reset pending. */
   int fire_irq;

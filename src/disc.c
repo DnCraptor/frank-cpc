@@ -823,33 +823,22 @@ byte ReadFDCStatus (void) {
 /**                                                                 **/
 /*********************************************************************/
 void WriteDskImage (int DrvNum) {
-#ifdef PICO_BUILD
-  /* Disk images are read-only on Pico — skip write-back to prevent
-   * SD card corruption. */
-  printf("WriteDskImage: skipped (read-only mode)\n");
-  dsk[DrvNum].fid = -1;
-  return;
-#endif
-  if (dsk[DrvNum].fid>0) {
-    printf ("Write disc image: %s", dsk[DrvNum].ImageName);
-    dsk[DrvNum].fid = open (dsk[DrvNum].ImageName, O_RDWR);
-    /***************************************/
-    /** Disk-Header speichern (256 Bytes) **/
-    /***************************************/
-    if (dsk[DrvNum].fid>0) {
-      write ( dsk[DrvNum].fid , &dsk[DrvNum].DiskHeader  , 0x100);
-
-      /***********************************/
-      /** Tracks und Daten speichern    **/
-      /***********************************/
-      write ( dsk[DrvNum].fid , dsk[DrvNum].Tracks , dsk[DrvNum].TrackSize );
-
-      close ( dsk[DrvNum].fid );
-      printf(" .... ok!");
-    }
-    printf ("\n");
+  if (dsk[DrvNum].ImageName[0] == '\0') {
+    dsk[DrvNum].fid = -1;
+    return;
   }
-  dsk[DrvNum].fid=-1;
+  printf("Write disc image: %s", dsk[DrvNum].ImageName);
+  dsk[DrvNum].fid = open(dsk[DrvNum].ImageName, O_RDWR);
+  if (dsk[DrvNum].fid > 0) {
+    write(dsk[DrvNum].fid, &dsk[DrvNum].DiskHeader, 0x100);
+    write(dsk[DrvNum].fid, dsk[DrvNum].Tracks, dsk[DrvNum].TrackSize);
+    close(dsk[DrvNum].fid);
+    printf(" .... ok!");
+  } else {
+    printf(" .... FAILED to open for writing");
+  }
+  printf("\n");
+  dsk[DrvNum].fid = -1;
 }
 
 /*********************************************************************/

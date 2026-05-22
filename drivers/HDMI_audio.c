@@ -205,6 +205,13 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
     return frank_hdmi_audio_write(stereo, count);
 }
 
+unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
+    if (SELECT_VGA)
+        return i2s_ring_push_stereo(samples, count);
+    if (count > 640) count = 640;
+    return frank_hdmi_audio_write(samples, count);
+}
+
 unsigned audio_ring_free(void) {
     if (SELECT_VGA)
         return i2s_ring_free();

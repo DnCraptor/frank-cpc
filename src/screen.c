@@ -178,9 +178,30 @@ void pico_reset_ink_events(void) {
   g_mode_event_count = 0;
 }
 
-/* CPC timing constants for raster bar calculations. */
+/* CPC timing constants for raster bar calculations.
+ * VSYNC fires at CRTC R7 character rows. Each char row = R9+1 scanlines.
+ * Default R7=30, R9=7 → VSYNC at line 30×8=240. Visible area starts
+ * ~34 lines into the frame (VSYNC + back porch). We derive this from R7
+ * when possible for games that change the VSYNC position. */
 #define CPC_TSTATES_PER_LINE 256
-#define CPC_VBLANK_LINES 34  /* lines before visible area (from CPCEC) */
+static int cpc_vblank_lines(void) {
+    int r7 = HD6845Register[7] & 0x7F;
+    int r9 = (HD6845Register[9] & 0x1F) + 1;
+    if (r7 == 0 || r9 == 0) return 34;
+    /* On standard CPC: R4=38, R7=30, R9=7 → total=39×8=312 lines.
+     * VSYNC at char row 30 → line 240. Visible starts at line 40 (R7+2 char rows).
+     * Back porch ≈ 3 char rows after VSYNC → start = (R7+3)×R9 - total
+     * Simpler: the default gives ~34, and R7 changes shift proportionally. */
+    int vsync_line = r7 * r9;
+    int total_lines = ((HD6845Register[4] & 0x7F) + 1) * r9
+                    + (HD6845Register[5] & 0x1F);
+    if (total_lines < 200) total_lines = 312;
+    /* Back porch: visible area starts ~6 lines after VSYNC ends */
+    int vblank = vsync_line + 6 - total_lines;
+    while (vblank < 0) vblank += total_lines;
+    if (vblank > 80) vblank = 34;  /* sanity */
+    return vblank;
+}
 
 int pico_has_ink_events(void) {
   return g_ink_events_active && g_ink_event_count > 0;
@@ -243,7 +264,7 @@ static void pico_build_row_screen_addr(void) {
     for (int r = 0; r < CPC_FB_ROWS; r++) {
         while (ev_idx < g_crtc_event_count) {
             int scanline = (int)(g_crtc_events[ev_idx].frame_cycle / CPC_TSTATES_PER_LINE);
-            int ev_row = scanline - CPC_VBLANK_LINES;
+            int ev_row = scanline - cpc_vblank_lines();
             if (ev_row > r) break;
             cur = g_crtc_events[ev_idx].screen_addr;
             cur_ink = g_crtc_events[ev_idx].ink_snapshot;
@@ -278,7 +299,7 @@ static void pico_build_row_ink_table(void) {
   int ev_row[INK_EVENT_MAX];
   for (int i = 0; i < g_ink_event_count; i++) {
     int scanline = (int)(g_ink_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
-    ev_row[i] = scanline - CPC_VBLANK_LINES;
+    ev_row[i] = scanline - cpc_vblank_lines();
   }
 
   /* Forward sweep from the top padding through the bottom padding.
@@ -504,7 +525,7 @@ static void pico_build_display_modes(uint8_t *display_mode) {
     int ev_row[MODE_EVENT_MAX];
     for (int i = 0; i < g_mode_event_count; i++) {
       int scanline = (int)(g_mode_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
-      ev_row[i] = scanline - CPC_VBLANK_LINES;
+      ev_row[i] = scanline - cpc_vblank_lines();
     }
 
     uint8_t running_mode = g_frame_start_mode;

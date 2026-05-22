@@ -11,6 +11,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/time.h"
+#include "hardware/clocks.h"
 #include "board_config.h"
 #include "HDMI.h"
 #include "cpc_compat.h"
@@ -30,6 +31,7 @@
 #include "cpc_autotype.h"
 #include "cpc_tape_loader.h"
 #include "tape.h"
+#include "nespad.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -536,8 +538,61 @@ void cpc_ps2_feed_events(void) {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* NES gamepad → CPC joystick row 9.                                  */
+/* CPC joystick matrix (active-low):                                  */
+/*   bit 0 = Up, bit 1 = Down, bit 2 = Left, bit 3 = Right,          */
+/*   bit 4 = Fire 1, bit 5 = Fire 2                                  */
+/* ------------------------------------------------------------------ */
+static bool g_nespad_initialized = false;
+
+void cpc_nespad_init(void) {
+    uint32_t cpu_khz = clock_get_hz(clk_sys) / 1000;
+    g_nespad_initialized = nespad_begin(cpu_khz,
+                                        NESPAD_GPIO_CLK,
+                                        NESPAD_GPIO_DATA,
+                                        NESPAD_DATA_PIN_NONE,
+                                        NESPAD_GPIO_LATCH);
+    if (g_nespad_initialized)
+        printf("NES gamepad initialized (CLK=%d DATA=%d LATCH=%d)\n",
+               NESPAD_GPIO_CLK, NESPAD_GPIO_DATA, NESPAD_GPIO_LATCH);
+}
+
+void cpc_nespad_poll(void) {
+    if (!g_nespad_initialized) return;
+
+    nespad_read();
+
+    uint32_t s = nespad_state;
+    uint8_t joy = 0xFF;  /* all released (active-low) */
+
+    if (s & DPAD_UP)    joy &= ~(1u << 0);
+    if (s & DPAD_DOWN)  joy &= ~(1u << 1);
+    if (s & DPAD_LEFT)  joy &= ~(1u << 2);
+    if (s & DPAD_RIGHT) joy &= ~(1u << 3);
+    if (s & DPAD_A)     joy &= ~(1u << 4);  /* A → Fire 1 */
+    if (s & DPAD_B)     joy &= ~(1u << 5);  /* B → Fire 2 */
+    if (s & DPAD_Y)     joy &= ~(1u << 4);  /* Y → Fire 1 (alt) */
+    if (s & DPAD_X)     joy &= ~(1u << 5);  /* X → Fire 2 (alt) */
+
+    /* Merge with keyboard: keep keyboard bits that are already pressed
+     * (cleared), OR in gamepad bits (also active-low). */
+    Keyport[9] &= joy;
+
+    /* Release gamepad-only bits: bits where joy=1 (released on pad)
+     * AND no keyboard key is holding them down.
+     * We only manage bits 0-5 (joystick); bits 6-7 are DEL and backspace. */
+    static uint8_t prev_joy = 0xFF;
+    uint8_t released = joy & ~prev_joy & 0x3F;  /* bits that went from 0→1 */
+    Keyport[9] |= released;
+    prev_joy = joy;
+}
+
 void cpc_pico_main(void) {
-    CPUZyklenBisInt = 13333;
+    /* CPC Gate Array fires IRQ every 52 HSYNCs.
+     * 1 HSYNC = R0+1 characters = 64 characters × 4 T-states = 256 T-states.
+     * Period = 52 × 256 = 13312 T-states. */
+    CPUZyklenBisInt = 13312;
     IRQCount = 0;
     ExitCPC = 0;
     NoDebug = 1;
@@ -580,6 +635,7 @@ void cpc_pico_main(void) {
     InitPrinter();
     init_dsp();
     ResetFDC();
+    cpc_nespad_init();
 
     ResetZ80(&cpu);
     cpu.TrapBadOps = 1;

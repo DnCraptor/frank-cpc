@@ -5,6 +5,10 @@
 #include "cpc_compat.h"
 
 extern unsigned audio_ring_push_mono(const int16_t *samples, unsigned count);
+extern unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count);
+
+/* AY stereo mode: 0=Mono, 1=ACB, 2=ABC */
+extern int ay_stereo_mode;
 
 int     NoSound=0;
 int     SoundOn=1;
@@ -24,6 +28,7 @@ char    log_ampl[16] = {0,3,4,5,7,9,11,13,17,21,26,33,41,51,64,80};
 int     max_volume = 0x7fff;
 int     AY_rec = -1;
 FILE    *debug_snd = NULL;
+int     ay_stereo_mode = 0;  /* 0=Mono, 1=ACB, 2=ABC */
 
 static uint32_t noise_seed = 1;
 
@@ -143,14 +148,28 @@ int random_noise(void) {
 
 void mix_notes(char *AY_array_reg) {
     static int16_t buffer[882];
+    static int16_t stereo_buf[882 * 2];  /* interleaved L/R */
     int      i, j;
-    double   mix, level;
+    double   level;
     float    amplitude, ampnoise;
     AYframe *cur_frame;
 
+    /* Stereo panning weights: {L, R} for channels A, B, C.
+     * ACB: A=left, C=center, B=right (most common CPC stereo)
+     * ABC: A=left, B=center, C=right */
+    static const double pan_acb[3][2] = {{1.0, 0.25}, {0.25, 1.0}, {0.65, 0.65}};
+    static const double pan_abc[3][2] = {{1.0, 0.25}, {0.65, 0.65}, {0.25, 1.0}};
+    const double (*pan)[2] = (ay_stereo_mode == 2) ? pan_abc : pan_acb;
+    int stereo = (ay_stereo_mode != 0);
+
     if (!SoundOn) {
-        memset(buffer, 0, nb_samples * sizeof(int16_t));
-        audio_ring_push_mono(buffer, nb_samples);
+        if (stereo) {
+            memset(stereo_buf, 0, nb_samples * 2 * sizeof(int16_t));
+            audio_ring_push_stereo(stereo_buf, nb_samples);
+        } else {
+            memset(buffer, 0, nb_samples * sizeof(int16_t));
+            audio_ring_push_mono(buffer, nb_samples);
+        }
         return;
     }
 
@@ -172,16 +191,10 @@ void mix_notes(char *AY_array_reg) {
         nsample[3] = fq[3] * random_noise();
     }
 
-    /* Envelope period: update from registers.
-     * CPC AY clock = 1 MHz; envelope period register value = fqe.
-     * Actual period in seconds = (fqe * 256) / 1000000.
-     * In samples: period_samples = (fqe * 256 * sample_rate) / 1000000.
-     * Envelope has 16 steps, so step_period = period_samples / 16.
-     * Writing to register 13 (shape) resets the envelope cycle. */
+    /* Envelope period: update from registers. */
     {
         unsigned short fqe = cur_frame->fqe;
         int shape = cur_frame->she & 0x0F;
-        /* Detect write to shape register (reg 13) — resets envelope */
         static int last_shape = -1;
         if (last_shape != shape || !ay_envelope.shape_written) {
             ay_envelope.cycle = 0;
@@ -191,12 +204,11 @@ void mix_notes(char *AY_array_reg) {
             last_shape = shape;
         }
         if (fqe == 0) fqe = 1;
-        /* Step period in samples: (fqe * 256) / 1_000_000 * sample_rate / 16 */
         ay_envelope.period = ((double)fqe * 256.0 * sample_rate) / (1000000.0 * 16.0);
     }
 
     for (i = 0; i < nb_samples; i++) {
-        mix = 0;
+        double mix_l = 0, mix_r = 0, mix_mono = 0;
 
         ampnoise   = phase[3];
         nsample[3] = nsample[3] - 1;
@@ -222,12 +234,14 @@ void mix_notes(char *AY_array_reg) {
                 vol = cur_frame->lv[j] & 0x0f;
             }
 
+            double ch_level = 0;
+
             /* Noise channel contribution */
             if ((cur_frame->mix & bits[j + 3]) == 0) {
-                mix += ampnoise * (use_envelope ? env_ampl[vol] : log_ampl[vol]);
+                ch_level += ampnoise * (use_envelope ? env_ampl[vol] : log_ampl[vol]);
             }
 
-            /* Tone channel: skip if period is 0 (no buzz) or volume is 0 */
+            /* Tone channel */
             if (fq[j] < 1.0 || vol == 0) {
                 level = 0;
             } else {
@@ -248,41 +262,76 @@ void mix_notes(char *AY_array_reg) {
                     level = amplitude * (use_envelope ? env_ampl[vol] : log_ampl[vol]);
             }
 
-            mix += level;
+            ch_level += level;
+
+            if (stereo) {
+                mix_l += ch_level * pan[j][0];
+                mix_r += ch_level * pan[j][1];
+            } else {
+                mix_mono += ch_level;
+            }
         }
 
-        mix = (mix / 256) * max_volume;
-
-        /* Clamp to int16 range */
-        if (mix > 32767.0)  mix = 32767.0;
-        if (mix < -32768.0) mix = -32768.0;
-
-        buffer[i] = (int16_t)mix;
+        if (stereo) {
+            mix_l = (mix_l / 256) * max_volume;
+            mix_r = (mix_r / 256) * max_volume;
+            if (mix_l > 32767.0)  mix_l = 32767.0;
+            if (mix_l < -32768.0) mix_l = -32768.0;
+            if (mix_r > 32767.0)  mix_r = 32767.0;
+            if (mix_r < -32768.0) mix_r = -32768.0;
+            stereo_buf[i * 2]     = (int16_t)mix_l;
+            stereo_buf[i * 2 + 1] = (int16_t)mix_r;
+        } else {
+            mix_mono = (mix_mono / 256) * max_volume;
+            if (mix_mono > 32767.0)  mix_mono = 32767.0;
+            if (mix_mono < -32768.0) mix_mono = -32768.0;
+            buffer[i] = (int16_t)mix_mono;
+        }
     }
 
     /* Two-stage post-filter:
      * 1) DC-blocking high-pass (removes DC offset from asymmetric mixing)
      * 2) First-order low-pass at ~4 kHz to tame square-wave harmonics */
-    {
+    if (stereo) {
+        static double lpf_l = 0.0, lpf_r = 0.0;
+        static double dc_pi_l = 0.0, dc_po_l = 0.0;
+        static double dc_pi_r = 0.0, dc_po_r = 0.0;
+        const double lp_alpha = 0.44;
+        const double dc_alpha = 0.995;
+        for (i = 0; i < nb_samples; i++) {
+            double sl = (double)stereo_buf[i * 2];
+            double dc_l = sl - dc_pi_l + dc_alpha * dc_po_l;
+            dc_pi_l = sl; dc_po_l = dc_l;
+            lpf_l += lp_alpha * (dc_l - lpf_l);
+            if (lpf_l > 32767.0) lpf_l = 32767.0;
+            if (lpf_l < -32768.0) lpf_l = -32768.0;
+            stereo_buf[i * 2] = (int16_t)lpf_l;
+
+            double sr = (double)stereo_buf[i * 2 + 1];
+            double dc_r = sr - dc_pi_r + dc_alpha * dc_po_r;
+            dc_pi_r = sr; dc_po_r = dc_r;
+            lpf_r += lp_alpha * (dc_r - lpf_r);
+            if (lpf_r > 32767.0) lpf_r = 32767.0;
+            if (lpf_r < -32768.0) lpf_r = -32768.0;
+            stereo_buf[i * 2 + 1] = (int16_t)lpf_r;
+        }
+        audio_ring_push_stereo(stereo_buf, nb_samples);
+    } else {
         static double lpf_state = 0.0;
         static double dc_prev_in = 0.0, dc_prev_out = 0.0;
-        const double lp_alpha = 0.44;   /* ~4 kHz cutoff at 44100 Hz */
-        const double dc_alpha = 0.995;  /* DC-blocker pole */
+        const double lp_alpha = 0.44;
+        const double dc_alpha = 0.995;
         for (i = 0; i < nb_samples; i++) {
             double s = (double)buffer[i];
-            /* DC blocker: y[n] = x[n] - x[n-1] + alpha * y[n-1] */
             double dc_out = s - dc_prev_in + dc_alpha * dc_prev_out;
-            dc_prev_in = s;
-            dc_prev_out = dc_out;
-            /* Low-pass */
+            dc_prev_in = s; dc_prev_out = dc_out;
             lpf_state += lp_alpha * (dc_out - lpf_state);
             if (lpf_state > 32767.0) lpf_state = 32767.0;
             if (lpf_state < -32768.0) lpf_state = -32768.0;
             buffer[i] = (int16_t)lpf_state;
         }
+        audio_ring_push_mono(buffer, nb_samples);
     }
-
-    audio_ring_push_mono(buffer, nb_samples);
 }
 #else
 /***************************************/

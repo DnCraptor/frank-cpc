@@ -28,6 +28,7 @@ typedef enum {
     CPC_SETTING_CUSTOMER,   /* Amstrad / Schneider / ...      (needs reset) */
     CPC_SETTING_AUDIO_IN,   /* Off / GPIO22                   (live)        */
     CPC_SETTING_FAST_TAPE,  /* Off / On — skip frame sync     (live)        */
+    CPC_SETTING_STEREO,     /* Mono / ACB / ABC               (live)        */
     CPC_SETTING_COUNT,      /* ---- visible settings end here ---- */
     CPC_SETTING_ROM,        /* Auto / <filename.rom>  — hidden for now      */
 } cpc_setting_id_t;
@@ -43,6 +44,7 @@ typedef struct {
     char    disk_b[128]; /* full path to disk image for drive B on boot   */
     char    tape[128];   /* full path to tape image (.cdt/.cas) on boot   */
     uint8_t fast_tape;   /* 0=Off, 1=On — run unthrottled during tape load */
+    uint8_t stereo;      /* 0=Mono, 1=ACB, 2=ABC stereo mode              */
 } cpc_settings_t;
 
 extern cpc_settings_t g_cpc_settings;
