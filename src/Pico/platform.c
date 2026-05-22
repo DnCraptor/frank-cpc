@@ -526,42 +526,6 @@ void cpc_pico_main(void) {
 
     printf("CPC initialized. Starting emulation...\n");
 
-    /* VGA test: type 30 random commands to trigger scrolling for tearing test */
-    cpc_autotype_set(
-        "HELLO WORLD\r"
-        "PRINT 1+2+3\r"
-        "ABCDEFGH\r"
-        "TESTING 123\r"
-        "QWERTY\r"
-        "SCROLLTEST\r"
-        "AAAA BBBB\r"
-        "ZXCVBNM\r"
-        "LKJHGFDS\r"
-        "POIUYTRE\r"
-        "MNBVCXZA\r"
-        "ASDFGHJK\r"
-        "QWERTYUI\r"
-        "ZXCVBNML\r"
-        "TESTLINE1\r"
-        "TESTLINE2\r"
-        "TESTLINE3\r"
-        "TESTLINE4\r"
-        "TESTLINE5\r"
-        "TESTLINE6\r"
-        "TESTLINE7\r"
-        "TESTLINE8\r"
-        "TESTLINE9\r"
-        "LINE TEN\r"
-        "LINE ELEVEN\r"
-        "LINE TWELVE\r"
-        "SCROLL MORE\r"
-        "KEEP GOING\r"
-        "ALMOST DONE\r"
-        "FINAL LINE\r",
-        500  /* boot delay = 10 seconds — gives time to start video capture */
-    );
-
-#if 0  /* Normal autorun — disabled for VGA testing */
     /* Arm auto-type if configured via autorun= in /cpc/cpc.ini.
      * \n in the string = 10-second pause (wait for disk load / title screen).
      * Boot delay of 200 frames = 4 s gives BASIC time to show the Ready prompt.
@@ -614,7 +578,6 @@ void cpc_pico_main(void) {
             }
         }
     }
-#endif
 
     RunZ80_cpc();
 

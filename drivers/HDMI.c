@@ -71,9 +71,16 @@ static inline uint32_t rgb_to_grey(uint32_t color888) {
  * from graphics_set_buffer() without adding another header. */
 extern uint8_t *vga_fb;
 
+/* Deferred VGA framebuffer swap — the ISR picks this up at VSync to avoid
+ * mid-frame pointer changes (tearing).  Defined in HDMI_vga.c.
+ * Pointer itself is volatile so main-core busy-waits see ISR writes. */
+extern uint8_t * volatile pending_vga_fb;
+
 void graphics_set_buffer(uint8_t *buffer) {
     graphics_buffer = buffer;
-    vga_fb = buffer;
+    /* VGA path: deferred swap — ISR picks up at VSync (no tearing).
+     * HDMI path: immediate (HDMI has its own double-buffering). */
+    pending_vga_fb = buffer;
 }
 
 uint8_t* graphics_get_buffer(void) {

@@ -50,4 +50,7 @@ const char *cpc_mounted_disk_name(int drv);
 /* Auto-load drivea.dsk / driveb.dsk from /cpc/disk on startup. */
 void cpc_disk_autoload(void);
 
+/* Returns true if the filename has a tape extension (.cdt/.cas). */
+int cpc_is_tape_file(const char *name);
+
 #endif /* CPC_LOADER_H */

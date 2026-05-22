@@ -9,11 +9,13 @@
  * HDMI_vga_hstx.c — VGA HSTX adapter for CPC.
  *
  * Exposes the same `graphics_*` API as the PIO HDMI driver but targets the
- * DispHSTX library's 320x240 RGB332 framebuffer (scaled 2x to 640x480 VGA
- * by DispHSTX).
+ * DispHSTX library's 360x240 RGB332 framebuffer (scaled 2x to 720x480 VGA
+ * by DispHSTX, detected as 640x480@60Hz by monitors).
  *
- * CPC frame (320x200 8-bit indexed) is centred inside the 320x240
- * framebuffer with 20-pixel vertical borders (matching CPC_SCREEN_LINES=240).
+ * CPC frame (320x200 8-bit indexed) is centred inside the 360x240
+ * framebuffer with 20-pixel horizontal borders and 20-pixel vertical
+ * borders (matching CPC_SCREEN_LINES=240).  The horizontal borders
+ * prevent edge clipping on VGA monitors.
  * DispHSTX reads the framebuffer directly from its Core 1 VGA ISR.
  *
  * Audio: I2S on Core 0 (DispHSTX owns Core 1 for VGA scanout).
@@ -22,6 +24,7 @@
 #include "HDMI.h"
 
 #include "pico/stdlib.h"
+#include "hardware/sync.h"
 
 #include "disphstx.h"
 #include "disphstx_vmode_simple.h"
@@ -30,14 +33,24 @@
 #include <string.h>
 
 /* ---- DispHSTX framebuffer ------------------------------------------- */
-#define FB_W 320
-#define FB_H 240
+/* VGA framebuffer is 360x240 (720x480 VGA doubled 2x).  CPC content
+ * (320x240) is centred with 20-pixel borders on each side, preventing
+ * edge clipping on VGA monitors that can't display the full active area. */
+#define VGA_FB_W 360
+#define VGA_FB_H 240
 
-static uint8_t __attribute__((aligned(4))) vga_framebuffer[FB_W * FB_H];
+/* CPC content dimensions (must match CPC_FB_WIDTH / CPC_SCREEN_LINES). */
+#define CPC_W 320
+#define CPC_H 240
+
+/* Centering offsets within the VGA framebuffer. */
+#define BORDER_L ((VGA_FB_W - CPC_W) / 2)   /* 20 */
+
+static uint8_t __attribute__((aligned(4))) vga_framebuffer[VGA_FB_W * VGA_FB_H];
 
 /* ---- Same externally-visible globals the frank-cpc code pokes. ------- */
-int graphics_buffer_width   = FB_W;
-int graphics_buffer_height  = FB_H;
+int graphics_buffer_width   = CPC_W;
+int graphics_buffer_height  = CPC_H;
 int graphics_buffer_shift_x = 0;
 int graphics_buffer_shift_y = 0;
 enum graphics_mode_t hdmi_graphics_mode = GRAPHICSMODE_DEFAULT;
@@ -48,6 +61,9 @@ static uint32_t pal_raw_rgb888[256];
 
 static bool crt_active = false;
 static bool greyscale_active = false;
+
+/* Border colour in RGB332 — used to fill left/right VGA margins. */
+static uint8_t border_rgb332 = 0;
 
 /* ---- Current / pending source buffer (owned by platform.c) ---------- */
 static const uint8_t *graphics_buffer = NULL;
@@ -73,28 +89,42 @@ static inline uint32_t rgb888_to_grey888(uint32_t c888) {
 }
 
 /* Blit one CPC frame (320x240, already padded by platform.c) into the
- * DispHSTX framebuffer through the palette LUT. */
+ * DispHSTX framebuffer through the palette LUT, centred with borders.
+ * Waits for VSYNC first to avoid tearing (blit completes within vblank). */
 static void __not_in_flash("vga_blit") blit_cpc_frame(const uint8_t *src) {
     if (!src) return;
-    const uint8_t *pal = pal_rgb332;
 
-    for (int y = 0; y < FB_H; y++) {
-        const uint8_t *srow = src + y * FB_W;
-        uint8_t *drow = vga_framebuffer + y * FB_W;
+    /* Wait for VSYNC — blit during vertical blanking to avoid tearing. */
+    while (!DispHstxIsVSync()) tight_loop_contents();
+
+    const uint8_t *pal = pal_rgb332;
+    const uint8_t bg = border_rgb332;
+
+    for (int y = 0; y < CPC_H; y++) {
+        const uint8_t *srow = src + y * CPC_W;
+        uint8_t *drow = vga_framebuffer + y * VGA_FB_W;
+
+        /* Left border */
+        memset(drow, bg, BORDER_L);
+
+        uint8_t *dst = drow + BORDER_L;
         if (crt_active && (y & 1)) {
-            memset(drow, 0, FB_W);
-            continue;
+            memset(dst, 0, CPC_W);
+        } else {
+            int x = 0;
+            int fast = CPC_W & ~3;
+            for (; x < fast; x += 4) {
+                uint32_t p = *(const uint32_t *)(srow + x);
+                dst[x + 0] = pal[ p        & 0xff];
+                dst[x + 1] = pal[(p >> 8)  & 0xff];
+                dst[x + 2] = pal[(p >> 16) & 0xff];
+                dst[x + 3] = pal[(p >> 24)       ];
+            }
+            for (; x < CPC_W; x++) dst[x] = pal[srow[x]];
         }
-        int x = 0;
-        int fast = FB_W & ~3;
-        for (; x < fast; x += 4) {
-            uint32_t p = *(const uint32_t *)(srow + x);
-            drow[x + 0] = pal[ p        & 0xff];
-            drow[x + 1] = pal[(p >> 8)  & 0xff];
-            drow[x + 2] = pal[(p >> 16) & 0xff];
-            drow[x + 3] = pal[(p >> 24)       ];
-        }
-        for (; x < FB_W; x++) drow[x] = pal[srow[x]];
+
+        /* Right border */
+        memset(drow + BORDER_L + CPC_W, bg, VGA_FB_W - BORDER_L - CPC_W);
     }
 }
 
@@ -139,7 +169,8 @@ void graphics_set_mode(enum graphics_mode_t mode) {
 }
 
 void graphics_set_bgcolor(uint32_t color888) {
-    graphics_set_palette(0, color888);
+    border_rgb332 = rgb888_to_rgb332(
+        greyscale_active ? rgb888_to_grey888(color888) : color888);
 }
 
 void graphics_restore_sync_colors(void) {
@@ -163,10 +194,10 @@ bool graphics_get_greyscale(void) { return greyscale_active; }
 struct video_mode_t graphics_get_video_mode(int mode) {
     (void)mode;
     struct video_mode_t vm = {
-        .h_total  = 800,
-        .h_width  = 640,
+        .h_total  = 900,
+        .h_width  = 720,
         .freq     = 60,
-        .vgaPxClk = 25200000,
+        .vgaPxClk = 28320000,
     };
     return vm;
 }
@@ -203,7 +234,7 @@ void graphics_init(g_out out) {
     }
     memset(vga_framebuffer, 0, sizeof(vga_framebuffer));
 
-    (void)DispVMode320x240x8_Fast(DISPHSTX_DISPMODE_VGA, vga_framebuffer);
+    (void)DispVMode360x240x8_Fast(DISPHSTX_DISPMODE_VGA, vga_framebuffer);
 
     if (pending_buffer && !graphics_buffer) {
         graphics_buffer = pending_buffer;

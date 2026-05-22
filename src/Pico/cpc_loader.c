@@ -7,6 +7,7 @@
 
 #include "cpc_loader.h"
 #include "cpc_settings.h"
+#include "cpc_tape_loader.h"
 #include "dialogs.h"
 #include "disc.h"
 #include "ff.h"
@@ -43,6 +44,23 @@ static int is_dsk(const char *name) {
         && (tolower((unsigned char)name[n-1]) == 'k');
 }
 
+static int is_tape(const char *name) {
+    size_t n = strlen(name);
+    if (n < 5) return 0;
+    if (name[n-4] != '.') return 0;
+    char e1 = tolower((unsigned char)name[n-3]);
+    char e2 = tolower((unsigned char)name[n-2]);
+    char e3 = tolower((unsigned char)name[n-1]);
+    /* .cdt or .cas */
+    if (e1 == 'c' && e2 == 'd' && e3 == 't') return 1;
+    if (e1 == 'c' && e2 == 'a' && e3 == 's') return 1;
+    return 0;
+}
+
+static int is_media(const char *name) {
+    return is_dsk(name) || is_tape(name);
+}
+
 static int cmp_entry(const void *pa, const void *pb) {
     const cpc_disk_entry_t *a = (const cpc_disk_entry_t *)pa;
     const cpc_disk_entry_t *b = (const cpc_disk_entry_t *)pb;
@@ -73,7 +91,7 @@ int cpc_disk_rescan(void) {
         if (fi.fname[0] == '.') continue;
 
         bool is_dir = (fi.fattrib & AM_DIR) != 0;
-        if (!is_dir && !is_dsk(fi.fname)) continue;
+        if (!is_dir && !is_media(fi.fname)) continue;
 
         size_t n = strlen(fi.fname);
         if (n >= CPC_DISK_FILENAME_LEN) continue;
@@ -184,7 +202,7 @@ void cpc_disk_autoload(void) {
         int dsk_count = 0;
         int dsk_idx   = -1;
         for (int i = 0; i < g_cpc_disk_entry_count; ++i) {
-            if (!g_cpc_disk_entries[i].is_dir) {
+            if (!g_cpc_disk_entries[i].is_dir && is_dsk(g_cpc_disk_entries[i].name)) {
                 dsk_count++;
                 dsk_idx = i;
             }
@@ -196,4 +214,8 @@ void cpc_disk_autoload(void) {
             cpc_mount_disk(0, path);
         }
     }
+}
+
+int cpc_is_tape_file(const char *name) {
+    return is_tape(name);
 }

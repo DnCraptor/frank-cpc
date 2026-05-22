@@ -28,6 +28,7 @@
 #include "disc.h"
 #include "printer.h"
 #include "aysound.h"
+#include "tape.h"
 #include <stdio.h>
 
 byte Pio_A, Pio_B, Pio_C;
@@ -187,6 +188,9 @@ void OutZ80 (register word Port, register byte Value) {
     KeyRow = Value & 15;
     Pio_C = Value;
 
+    /* Cassette motor control: bit 4 of Port C */
+    tape_set_motor((Value >> 4) & 1);
+
     switch (Value & 0xC0) {
       case 0xC0:   /* AY register SELECTION */
             AY_num_reg = Pio_A;
@@ -243,7 +247,13 @@ byte InZ80 (register word Port) {
   if ((Port & 0x0B00)==0x0000) return Keyport[KeyRow];
 
   /* 0xF5xx: 8255 PIO B */
-  if ((Port & 0x0B00)==0x0100) return Pio_B;
+  if ((Port & 0x0B00)==0x0100) {
+    /* Bit 7 = cassette data input (active-high when signal present) */
+    byte b = Pio_B;
+    if (tape_is_loaded() && tape_get_motor())
+      b = (b & 0x7F) | (tape_get_status() ? 0x80 : 0x00);
+    return b;
+  }
 
   /* 0xF5xx: 8255 PIO C */
   if ((Port & 0x0B00)==0x0200) return Pio_C;

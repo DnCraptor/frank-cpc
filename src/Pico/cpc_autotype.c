@@ -108,8 +108,9 @@ void cpc_autotype_tick(void) {
     } else if (g_char_frame >= FRAMES_PER_CHAR - 1) {
         g_pos++;
         g_char_frame = 0;
-        if (g_pos >= g_len)
+        if (g_pos >= g_len) {
             printf("autotype: done\n");
+        }
         return;
     }
 

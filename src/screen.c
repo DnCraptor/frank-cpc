@@ -726,6 +726,24 @@ void RedrawScreenImage(void) {
       }
     }
   } else if (g_crtc_event_count > 0) {
+    /* Detect simple scroll vs true mid-frame split effect.
+     * A simple scroll (BASIC changing R12/R13) produces 1-2 CRTC events
+     * within a few T-states.  On real CPC hardware (CRTC type 1), R12/R13
+     * are latched at VSync, so the change applies uniformly to the next
+     * frame — no mid-frame split.  If all events are clustered within
+     * ~128 T-states, treat as a simple scroll and use the standard path
+     * (which already has the post-scroll LineOffset applied uniformly). */
+    int is_simple_scroll = 1;
+    if (g_crtc_event_count > 4) {
+      is_simple_scroll = 0;
+    } else {
+      uint32_t first_cyc = g_crtc_events[0].frame_cycle;
+      uint32_t last_cyc  = g_crtc_events[g_crtc_event_count - 1].frame_cycle;
+      if (last_cyc - first_cyc > 128)
+        is_simple_scroll = 0;
+    }
+    if (is_simple_scroll) goto standard_path;
+
     /* ---- Per-row CRTC split rendering ----
      * Used when R12/R13 change mid-frame (wipe/split effects).
      * Each row may use a different screen start address. */
@@ -753,6 +771,7 @@ void RedrawScreenImage(void) {
     }
   } else {
     /* ---- Standard 40×25 rendering path ---- */
+    standard_path:
     for (int bank = 0; bank < 8; bank++) {
       int z = bank << 11;
       for (int C = 0; C < 25; C++) {

@@ -11,6 +11,8 @@
 #include "cpc_ui.h"
 #include "cpc_settings.h"
 #include "cpc_loader.h"
+#include "cpc_tape_loader.h"
+#include "tape.h"
 #include "ui_draw.h"
 #include "board_config.h"
 
@@ -62,7 +64,8 @@ static int        s_setting_row      = 0;
 static int        s_settings_scroll  = 0;
 
 /* Disk menu state */
-static int        s_menu_row         = 0;   /* 0=Drive A, 1=Drive B */
+static int        s_menu_row         = 0;   /* 0=Drive A, 1=Drive B, 2=Tape, 3=GPIO22 */
+#define MENU_ROWS 4
 
 /* Disk browser state */
 static int        s_disk_drive       = 0;
@@ -72,7 +75,10 @@ static char       s_disk_msg[64]     = "";
 
 /* Dynamic row helpers (depend on s_disk_drive, so defined after state vars) */
 static bool disk_has_eject(void) {
-    return cpc_mounted_disk_name(s_disk_drive) != NULL;
+    if (s_disk_drive < 2)
+        return cpc_mounted_disk_name(s_disk_drive) != NULL;
+    else
+        return cpc_mounted_tape_name() != NULL;
 }
 static int disk_dotdot_row(void)   { return disk_has_eject() ? 1 : 0; }
 static int disk_entry_offset(void) { return disk_has_eject() ? 2 : 1; }
@@ -197,11 +203,23 @@ static bool handle_disk_menu_key(unsigned int ks) {
             if (s_menu_row > 0) --s_menu_row;
             return true;
         case KS_Down:
-            if (s_menu_row < 1) ++s_menu_row;
+            if (s_menu_row < MENU_ROWS - 1) ++s_menu_row;
             return true;
         case KS_Return:
         case KS_Right:
-            open_browser_for(s_menu_row);
+            if (s_menu_row < 2) {
+                open_browser_for(s_menu_row);
+            } else if (s_menu_row == 2) {
+                /* Tape: if mounted, eject; else open browser for tape */
+                if (cpc_mounted_tape_name()) {
+                    cpc_eject_tape();
+                } else {
+                    open_browser_for(2); /* 2 = tape mode */
+                }
+            } else if (s_menu_row == 3) {
+                /* Toggle GPIO22 tape input */
+                tape_set_gpio_mode(!tape_get_gpio_mode());
+            }
             return true;
         default:
             return false;
@@ -258,9 +276,14 @@ static bool handle_disk_browser_key(unsigned int ks) {
         case KS_Right:
             if (disk_has_eject() && s_disk_row == 0) {
                 /* Eject */
-                cpc_eject_disk(s_disk_drive);
-                snprintf(s_disk_msg, sizeof(s_disk_msg),
-                         "Drive %c ejected", 'A' + s_disk_drive);
+                if (s_disk_drive < 2) {
+                    cpc_eject_disk(s_disk_drive);
+                    snprintf(s_disk_msg, sizeof(s_disk_msg),
+                             "Drive %c ejected", 'A' + s_disk_drive);
+                } else {
+                    cpc_eject_tape();
+                    snprintf(s_disk_msg, sizeof(s_disk_msg), "Tape ejected");
+                }
                 s_state = UI_DISK_MENU;
                 return true;
             }
@@ -283,10 +306,20 @@ static bool handle_disk_browser_key(unsigned int ks) {
                 } else {
                     char path[CPC_DISK_PATH_LEN];
                     cpc_disk_entry_path(ei, path, sizeof(path));
-                    if (cpc_mount_disk(s_disk_drive, path) == 0) {
-                        s_state = UI_DISK_MENU;
-                    } else {
-                        snprintf(s_disk_msg, sizeof(s_disk_msg), "Failed to mount");
+                    if (cpc_is_tape_file(g_cpc_disk_entries[ei].name)) {
+                        /* Tape file → mount as tape */
+                        if (cpc_mount_tape(path) == 0) {
+                            s_state = UI_DISK_MENU;
+                        } else {
+                            snprintf(s_disk_msg, sizeof(s_disk_msg), "Failed to load tape");
+                        }
+                    } else if (s_disk_drive < 2) {
+                        /* DSK file → mount as disk */
+                        if (cpc_mount_disk(s_disk_drive, path) == 0) {
+                            s_state = UI_DISK_MENU;
+                        } else {
+                            snprintf(s_disk_msg, sizeof(s_disk_msg), "Failed to mount");
+                        }
                     }
                 }
             }
@@ -400,7 +433,7 @@ static void render_settings_confirm(uint8_t *fb, int stride) {
 /* ---- disk menu renderer ---------------------------------------------- */
 
 static void render_disk_menu(uint8_t *fb, int stride) {
-    draw_chrome(fb, stride, " Disk Browser ");
+    draw_chrome(fb, stride, " Media Browser ");
 
     int x  = content_x();
     int y  = content_y();
@@ -411,52 +444,88 @@ static void render_disk_menu(uint8_t *fb, int stride) {
     const int name_avail = cw - 8 - label_w;
     const int max_chars  = name_avail / UI_CHAR_W;
 
-    for (int drv = 0; drv < 2; ++drv) {
-        bool    sel = (drv == s_menu_row);
+    for (int row = 0; row < MENU_ROWS; ++row) {
+        bool    sel = (row == s_menu_row);
         uint8_t bg  = sel ? UI_COLOR_ACCENT    : UI_COLOR_BG;
         uint8_t fg  = sel ? UI_COLOR_ACCENT_FG : UI_COLOR_FG;
 
         ui_fill_rect(fb, stride, x, y, cw, UI_LINE_H + 2, bg);
 
-        /* Drive label left */
-        char label[12];
-        snprintf(label, sizeof(label), "Drive %c:", 'A' + drv);
-        ui_draw_string(fb, stride, x + 4, y + 2, label, fg);
+        if (row < 2) {
+            /* Drive A / Drive B */
+            char label[12];
+            snprintf(label, sizeof(label), "Drive %c:", 'A' + row);
+            ui_draw_string(fb, stride, x + 4, y + 2, label, fg);
 
-        /* Mounted name right (truncated with "..." if needed), or "(empty)" */
-        const char *name = cpc_mounted_disk_name(drv);
-        if (name) {
-            int len = (int)strlen(name);
-            char buf[CPC_DISK_FILENAME_LEN + 4];
-            if (len <= max_chars) {
-                memcpy(buf, name, (size_t)len + 1);
+            const char *name = cpc_mounted_disk_name(row);
+            if (name) {
+                int len = (int)strlen(name);
+                char buf[CPC_DISK_FILENAME_LEN + 4];
+                if (len <= max_chars) {
+                    memcpy(buf, name, (size_t)len + 1);
+                } else {
+                    int show = max_chars - 3;
+                    if (show < 1) show = 1;
+                    memcpy(buf, name, (size_t)show);
+                    buf[show] = '.'; buf[show+1] = '.'; buf[show+2] = '.'; buf[show+3] = '\0';
+                    len = max_chars;
+                }
+                int nx = x + cw - 4 - len * UI_CHAR_W;
+                ui_draw_string(fb, stride, nx, y + 2, buf, fg);
             } else {
-                int show = max_chars - 3;
-                if (show < 1) show = 1;
-                memcpy(buf, name, (size_t)show);
-                buf[show] = '.'; buf[show+1] = '.'; buf[show+2] = '.'; buf[show+3] = '\0';
-                len = max_chars;
+                const char *empty = "(empty)";
+                int nx = x + cw - 4 - (int)strlen(empty) * UI_CHAR_W;
+                ui_draw_string(fb, stride, nx, y + 2, empty,
+                               sel ? UI_COLOR_ACCENT_FG : UI_COLOR_DIM);
             }
-            int nx = x + cw - 4 - len * UI_CHAR_W;
-            ui_draw_string(fb, stride, nx, y + 2, buf, fg);
-        } else {
-            const char *empty = "(empty)";
-            int nx = x + cw - 4 - (int)strlen(empty) * UI_CHAR_W;
-            ui_draw_string(fb, stride, nx, y + 2, empty,
-                           sel ? UI_COLOR_ACCENT_FG : UI_COLOR_DIM);
+        } else if (row == 2) {
+            /* Tape */
+            ui_draw_string(fb, stride, x + 4, y + 2, "Tape:", fg);
+
+            const char *tname = cpc_mounted_tape_name();
+            if (tname) {
+                int len = (int)strlen(tname);
+                char buf[CPC_DISK_FILENAME_LEN + 4];
+                if (len <= max_chars) {
+                    memcpy(buf, tname, (size_t)len + 1);
+                } else {
+                    int show = max_chars - 3;
+                    if (show < 1) show = 1;
+                    memcpy(buf, tname, (size_t)show);
+                    buf[show] = '.'; buf[show+1] = '.'; buf[show+2] = '.'; buf[show+3] = '\0';
+                    len = max_chars;
+                }
+                int nx = x + cw - 4 - len * UI_CHAR_W;
+                ui_draw_string(fb, stride, nx, y + 2, buf, fg);
+            } else {
+                const char *empty = "(browse)";
+                int nx = x + cw - 4 - (int)strlen(empty) * UI_CHAR_W;
+                ui_draw_string(fb, stride, nx, y + 2, empty,
+                               sel ? UI_COLOR_ACCENT_FG : UI_COLOR_DIM);
+            }
+        } else if (row == 3) {
+            /* GPIO22 tape input toggle */
+            ui_draw_string(fb, stride, x + 4, y + 2, "Audio In:", fg);
+
+            const char *val = tape_get_gpio_mode() ? "GPIO22" : "Off";
+            int nx = x + cw - 4 - (int)strlen(val) * UI_CHAR_W;
+            ui_draw_string(fb, stride, nx, y + 2, val, fg);
         }
 
         y += UI_LINE_H + 4;
     }
 
-    draw_footer(fb, stride, "UP/DN  ENTER=browse  ESC");
+    draw_footer(fb, stride, "UP/DN  ENTER=select  ESC");
 }
 
 /* ---- disk browser renderer ------------------------------------------- */
 
 static void render_disk_browser(uint8_t *fb, int stride) {
     char title[48];
-    snprintf(title, sizeof(title), " Drive %c ", 'A' + s_disk_drive);
+    if (s_disk_drive < 2)
+        snprintf(title, sizeof(title), " Drive %c ", 'A' + s_disk_drive);
+    else
+        snprintf(title, sizeof(title), " Tape ");
     draw_chrome(fb, stride, title);
 
     int x  = content_x();
@@ -484,7 +553,9 @@ static void render_disk_browser(uint8_t *fb, int stride) {
         int max_item_chars = (cw - 10) / UI_CHAR_W;
 
         if (disk_has_eject() && i == 0) {
-            const char *mounted = cpc_mounted_disk_name(s_disk_drive);
+            const char *mounted = (s_disk_drive < 2)
+                ? cpc_mounted_disk_name(s_disk_drive)
+                : cpc_mounted_tape_name();
             char item[CPC_DISK_FILENAME_LEN + 16];
             snprintf(item, sizeof(item), "[Eject: %s]", mounted);
             int len = (int)strlen(item);

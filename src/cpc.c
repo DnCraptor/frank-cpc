@@ -15,6 +15,7 @@
 #include "disc.h"
 #include "dialogs.h"
 #include "cpc.h"
+#include "tape.h"
 
 char WorkDirectory[80];
 Z80 cpu;
@@ -66,6 +67,10 @@ word LoopZ80(register Z80 *R) {
   (void)R;
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
+
+  /* Advance tape playback by one interrupt period's worth of T-states. */
+  if (tape_is_loaded() && tape_get_motor())
+    tape_main(CPUZyklenBisInt);
 
   pico_record_period_state(IRQCount - 1);
   cpc_ps2_feed_events();

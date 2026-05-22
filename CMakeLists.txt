@@ -181,6 +181,7 @@ set(CPC_CORE
     src/disc.c
     src/io.c
     src/mem.c
+    src/tape.c
 )
 
 set(CPC_ADAPTED
@@ -196,6 +197,7 @@ set(PICO_PORT
     src/Pico/platform.c
     src/Pico/cpc_settings.c
     src/Pico/cpc_loader.c
+    src/Pico/cpc_tape_loader.c
     src/Pico/cpc_ui.c
     src/Pico/cpc_autotype.c
     src/Pico/ui_draw.c
