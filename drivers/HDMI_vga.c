@@ -71,6 +71,22 @@
 #define VGA_DMA_IRQ (DMA_IRQ_1)
 #endif
 
+/* 720x480 VGA pixel clock (28.32 MHz).  Produces the same HSYNC/VSYNC
+ * frequencies as 640x480@60Hz but with 720 active pixels, giving
+ * CPC's 320 source pixels 20-pixel borders on each side.  Matches the
+ * timing used by DispHSTX's DispVMode360x240x8_Fast. */
+#define VGA_PIX_CLK 28320000.0
+
+/* Horizontal border width in *source* pixels (each becomes 2 VGA pixels).
+ * 360 visible − 320 CPC = 40 → 20 per side. */
+#define VGA_BORDER  20
+
+/* Vertical border in *source* lines (each becomes 2 VGA scan lines).
+ * Sacrifices 10 lines top + 10 bottom of the 240-line framebuffer so the
+ * CPC content sits inside a 440-line (220-source) window with 40 VGA-line
+ * margins on top and bottom — prevents monitor overscan from clipping. */
+#define VGA_BORDER_V 10
+
 /* conv_color[] is defined in HDMI.c — VGA reuses its 4 KB buffer as
  * line-pattern storage when SELECT_VGA is active. */
 extern uint32_t conv_color[1224];
@@ -104,6 +120,12 @@ extern uint8_t *get_line_buffer(int line);
  * SRAM without calling across the translation unit boundary. Exposed
  * (non-static) so HDMI.c can write to it. */
 uint8_t * __not_in_flash("vga") vga_fb = NULL;
+
+/* Deferred framebuffer swap: graphics_set_buffer() writes here, the ISR
+ * copies to vga_fb at VSync so the pointer never changes mid-frame.
+ * The pointer ITSELF must be volatile (not just the data) so the compiler
+ * re-reads it in busy-wait loops on the main core. */
+uint8_t * volatile __not_in_flash("vga") pending_vga_fb = NULL;
 
 /* Video mode table (defined in HDMI.c): shares the 640x480@60Hz entry. */
 extern struct video_mode_t graphics_get_video_mode(int mode);
@@ -175,16 +197,23 @@ static void __not_in_flash_func(dma_handler_VGA)(void) {
     if (screen_line == h_total) {
         screen_line = 0;
         vga_frame_number++;
+        /* Deferred framebuffer swap — only change pointer at VSync so the
+         * ISR never reads a partially-updated frame (no tearing). */
+        uint8_t *p = (uint8_t *)pending_vga_fb;
+        if (p) {
+            vga_fb = p;
+            pending_vga_fb = NULL;
+        }
     }
 
     if (screen_line >= h_width) {
         /* Vertical blanking: either VS or back-porch line template. */
         if (screen_line == h_width || screen_line == h_width + 3) {
-            uint32_t *output_buffer_32bit = lines_pattern[2 + (screen_line & 1)];
-            output_buffer_32bit += shift_picture / 4;
-            uint32_t color32 = bg_color[0];
-            for (int i = visible_line_size / 2; i--;) {
-                *output_buffer_32bit++ = color32;
+            uint16_t *ob16 = (uint16_t *)lines_pattern[2 + (screen_line & 1)];
+            ob16 += shift_picture / 2;
+            uint16_t bg16 = (uint16_t)bg_color[0];
+            for (int i = visible_line_size; i--;) {
+                *ob16++ = bg16;
             }
         }
 
@@ -209,8 +238,14 @@ static void __not_in_flash_func(dma_handler_VGA)(void) {
             return;
     }
 
-    if (y < 0) {
-        dma_channel_set_read_addr(dma_chan_ctrl_vga, &lines_pattern[0], false);
+    if (y < 0 || y < VGA_BORDER_V || y >= (int)(h_width / 2) - VGA_BORDER_V) {
+        /* Vertical border: fill with background colour so monitors that
+         * overscan the edges still show a clean border, not clipped content. */
+        uint16_t *ob16 = (uint16_t *)(*output_buffer);
+        ob16 += shift_picture / 2;
+        uint16_t bg16 = (uint16_t)bg_color[0];
+        for (int i = visible_line_size; i--;) *ob16++ = bg16;
+        dma_channel_set_read_addr(dma_chan_ctrl_vga, output_buffer, false);
         return;
     }
     if (y >= graphics_buffer_height) {
@@ -218,20 +253,18 @@ static void __not_in_flash_func(dma_handler_VGA)(void) {
          * the bottom border is a clean bg colour rather than stale bits. */
         if (y == graphics_buffer_height || y == graphics_buffer_height + 1 ||
             y == graphics_buffer_height + 2) {
-            uint32_t *output_buffer_32bit = *output_buffer;
-            uint32_t color32 = bg_color[0];
-
-            output_buffer_32bit += shift_picture / 4;
-            for (int i = visible_line_size / 2; i--;) {
-                *output_buffer_32bit++ = color32;
+            uint16_t *ob16 = (uint16_t *)*output_buffer;
+            uint16_t bg16 = (uint16_t)bg_color[0];
+            ob16 += shift_picture / 2;
+            for (int i = visible_line_size; i--;) {
+                *ob16++ = bg16;
             }
         }
         dma_channel_set_read_addr(dma_chan_ctrl_vga, output_buffer, false);
         return;
     }
 
-    /* Active image area. Read the framebuffer pointer from SRAM mirror
-     * to avoid a flash-resident helper call on every scanline. */
+    /* Active image area. */
     uint8_t *fb = vga_fb;
     if (!fb || y >= graphics_buffer_height) {
         dma_channel_set_read_addr(dma_chan_ctrl_vga, &lines_pattern[0], false);
@@ -242,37 +275,29 @@ static void __not_in_flash_func(dma_handler_VGA)(void) {
     uint16_t *output_buffer_16bit = (uint16_t *)(*output_buffer);
     output_buffer_16bit += shift_picture / 2;
 
-    graphics_buffer_shift_x &= 0xfffffff2; /* 2-bit-aligned shift */
-
-    uint max_width = graphics_buffer_width;
-    if (graphics_buffer_shift_x < 0) {
-        input_buffer_8bit -= graphics_buffer_shift_x / 4;
-        max_width += graphics_buffer_shift_x;
-    }
-    else {
-        output_buffer_16bit += graphics_buffer_shift_x;
+    /* Left border — CPC border colour. */
+    {
+        uint16_t bg16 = (uint16_t)bg_color[0];
+        for (int i = 0; i < VGA_BORDER; i++) *output_buffer_16bit++ = bg16;
     }
 
-    int width = MIN((visible_line_size - ((graphics_buffer_shift_x > 0) ? graphics_buffer_shift_x : 0)),
-                    (int)max_width);
-    if (width < 0) {
-        dma_channel_set_read_addr(dma_chan_ctrl_vga, output_buffer, false);
-        return;
+    /* Palette index → 16-bit line pattern (2 VGA pixels per source pixel). */
+    {
+        uint16_t *pal = pallette;
+        int w = (int)graphics_buffer_width;
+        if (w > visible_line_size - 2 * VGA_BORDER)
+            w = visible_line_size - 2 * VGA_BORDER;
+        for (register int x = 0; x < w; ++x) {
+            *output_buffer_16bit++ = pal[input_buffer_8bit[x]];
+        }
     }
 
-    /* Palette index -> 16-bit line pattern (two VGA pixels per source
-     * pixel — gives 2x horizontal scaling to fill 640 from 320 source). */
-    uint16_t *current_palette = pallette;
-    switch (vga_graphics_mode) {
-        case GRAPHICSMODE_DEFAULT:
-            for (register int x = 0; x < width; ++x) {
-                register uint8_t cx = input_buffer_8bit[x];
-                *output_buffer_16bit++ = current_palette[cx];
-            }
-            break;
-        default:
-            break;
+    /* Right border. */
+    {
+        uint16_t bg16 = (uint16_t)bg_color[0];
+        for (int i = 0; i < VGA_BORDER; i++) *output_buffer_16bit++ = bg16;
     }
+
     dma_channel_set_read_addr(dma_chan_ctrl_vga, output_buffer, false);
 }
 
@@ -286,25 +311,27 @@ static void graphics_set_mode_vga(enum graphics_mode_t mode) {
     /* Already configured? Only mode was updated. */
     if (lines_pattern_data) return;
 
+    /* 720x480@60Hz VGA timing — exact match of DispHSTX 720x480 mode.
+     * Horizontal: 720 active + 18 front + 108 sync + 54 back = 900 total.
+     * Vertical: same as 640x480 (480 active, 525 total).
+     * Pixel clock: 28.32 MHz (900 × 31.47 kHz HSYNC).
+     * Note: shift_picture=162, NOT divisible by 4. All fills must use
+     * byte or uint16_t addressing (no uint32_t* casts at shift_picture). */
     uint8_t TMPL_VHS8  = 0;
     uint8_t TMPL_VS8   = 0;
     uint8_t TMPL_HS8   = 0;
     uint8_t TMPL_LINE8 = 0b11000000;
 
-    int HS_SHIFT = 328 * 2;
-    int HS_SIZE  = 48  * 2;
-    int line_size = 400 * 2;
-    shift_picture     = line_size - HS_SHIFT;
+    int HS_SHIFT = 369 * 2;   /* active + front porch = 720+18 = 738 */
+    int HS_SIZE  = 54  * 2;   /* HSYNC width = 108 pixels */
+    int line_size = 450 * 2;  /* total = 900 pixels */
+    shift_picture     = line_size - HS_SHIFT;  /* = 900 - 738 = 162 */
     palette16_mask    = 0xc0c0;
-    visible_line_size = 320;
+    visible_line_size = 360;  /* 360 source pixels → 720 VGA pixels */
     line_VS_begin     = 490;
     line_VS_end       = 491;
 
-    double fdiv;
-    {
-        struct video_mode_t vMode = graphics_get_video_mode(get_video_mode());
-        fdiv = clock_get_hz(clk_sys) / (double)vMode.vgaPxClk;
-    }
+    double fdiv = clock_get_hz(clk_sys) / VGA_PIX_CLK;
 
     /* Adjust bg colour to ride the sync-bit mask. */
     bg_color[0] = bg_color[0] & 0x3f3f3f3f | palette16_mask | palette16_mask << 16;
