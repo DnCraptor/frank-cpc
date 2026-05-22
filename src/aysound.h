@@ -34,14 +34,26 @@
 
 struct AYframe
    {
-    unsigned short fqx[3];
-    unsigned char  fqn;
-    unsigned char  mix;
-    unsigned char  lv[3];
-    unsigned short fqe;
-    unsigned char  she;
+    unsigned short fqx[3];     /* Tone period for channels A, B, C (regs 0-5) */
+    unsigned char  fqn;        /* Noise period (reg 6) */
+    unsigned char  mix;        /* Mixer control (reg 7) */
+    unsigned char  lv[3];      /* Volume / envelope mode for A, B, C (regs 8-10) */
+    unsigned short fqe;        /* Envelope period (regs 11-12) */
+    unsigned char  she;        /* Envelope shape (reg 13) */
    };
 typedef struct AYframe AYframe;
+
+/* ---- AY-3-8912 hardware envelope generator state ---- */
+typedef struct {
+    int     cycle;         /* Current position in envelope (0-15, or 256/512 = held) */
+    int     sign_10_14;    /* Direction for alternating shapes 10/14: +1 or -1 */
+    double  counter;       /* Sample counter for envelope period */
+    double  period;        /* Envelope period in samples */
+    int     volume;        /* Current envelope output amplitude (0-15) */
+    int     shape_written; /* Flag: non-zero once reg 13 has been written */
+} AYEnvelope;
+
+extern AYEnvelope ay_envelope;
 
 extern  int     NoSound;
 extern  int     SoundOn;

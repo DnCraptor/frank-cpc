@@ -190,6 +190,7 @@ set(CPC_ADAPTED
     src/colors.c
     src/keyboard.c
     src/aysound.c
+    src/snapshot.c
 )
 
 set(PICO_PORT

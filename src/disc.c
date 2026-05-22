@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #ifdef PICO_BUILD
 #include "cpc_compat.h"
 #include "ff.h"
@@ -80,6 +81,9 @@ static inline int pico_write(int fd, const void *buf, unsigned n) {
 /**                                                      **/
 /**********************************************************/
 struct DskImg dsk [2];
+
+/* Track which sector was last accessed for Read ID cycling */
+static int FDCSectorIdx[2] = {0, 0};
 
 byte FloppyMotor;               /* TRUE=Motor an, FALSE = Motor aus       */
 byte FDCCurrDrv;                /* Aktuelles Laufwerk                     */
@@ -219,8 +223,16 @@ void FDCExecWriteCommand (register byte Value) {
         ExecCmdPhase = TRUE;
         int_cause=1;
         TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
-        TrackDataStart = ((FDCCommand[4] & 0x0F)-1) << 9;
-        FDCDataLength = (dsk[FDCCurrDrv].Tracks[TrackIndex].BPS * dsk[FDCCurrDrv].Tracks[TrackIndex].SPT) << 9;
+        TrackDataStart = 0;
+        /* Calculate total data in track */
+        {
+          unsigned long total = 0;
+          int s;
+          struct track_type *trk = &dsk[FDCCurrDrv].Tracks[TrackIndex];
+          for (s = 0; s < trk->SPT; s++)
+            total += GetSectorDataLength(FDCCurrDrv, TrackIndex, s);
+          FDCDataLength = total;
+        }
         FDCDataPointer = 0;
         StatusCounter = 100;
         StatusRegister = 0xF0;     /* RQM=1, DIO=FDC->CPU, EXM=1, CB=1 */
@@ -271,8 +283,17 @@ void FDCExecWriteCommand (register byte Value) {
         }
         else {
           TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
-          TrackDataStart = ((FDCCommand[4] & 0x0F)-1) << 9;
-          FDCDataLength = 512 + ((FDCCommand[4]-FDCCommand[6])<<9);
+          {
+            int si = FindSectorByID(FDCCurrDrv, TrackIndex, FDCCommand[4], 0);
+            if (si < 0) {
+              st1 = 0x04; /* Sector not found (ND) */
+              st0_IC = 0x40;
+              GetRes7();
+              break;
+            }
+            TrackDataStart = GetSectorDataOffset(FDCCurrDrv, TrackIndex, si);
+            FDCDataLength = GetSectorDataLength(FDCCurrDrv, TrackIndex, si);
+          }
           FDCDataPointer = 0;
           StatusCounter = 100;
           StatusRegister = 0xB0;     /* RQM=1, DIO=CPU->FDC, EXM=1, CB=1 */
@@ -302,8 +323,30 @@ void FDCExecWriteCommand (register byte Value) {
         ExecCmdPhase = TRUE;
         int_cause=2;
         TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
-        TrackDataStart = ((FDCCommand[4] & 0x0F)-1) << 9;
-        FDCDataLength = 512 + (((FDCCommand[4] & 0xF) - (FDCCommand[6] & 0xF))<<9);
+        {
+          int si = FindSectorByID(FDCCurrDrv, TrackIndex, FDCCommand[4], 0);
+          if (si < 0) {
+            st1 = 0x04; /* Sector not found (ND) */
+            st0_IC = 0x40;
+            GetRes7();
+            break;
+          }
+          /* Propagate ST1/ST2 from sector info (copy protection) */
+          st1 |= dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].status1;
+          st2 |= dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].status2;
+          /* If sector has CM (deleted data mark) set in ST2 and this
+           * is a normal read (not read deleted), signal it in ST2 */
+          if (dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].status2 & 0x40) {
+            st2 |= 0x40; /* CM - control mark (deleted data) */
+          }
+          TrackDataStart = GetSectorDataOffset(FDCCurrDrv, TrackIndex, si);
+          FDCDataLength = GetSectorDataLength(FDCCurrDrv, TrackIndex, si);
+          /* Update result CHRN from the sector's actual ID fields */
+          FDCCommand[2] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].track;
+          FDCCommand[3] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].head;
+          FDCCommand[4] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].sector;
+          FDCCommand[5] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].BPS;
+        }
         FDCDataPointer = 0;
         StatusCounter = 100;
         StatusRegister = 0xF0;     /* RQM=1, DIO=FDC->CPU, EXM=1, CB=1 */
@@ -366,39 +409,170 @@ void FDCExecWriteCommand (register byte Value) {
       st0_EC = 0x00;
       break;
 
-    //case 9:
-    //  /* Write deleted data */
-    //  break;
+    case 9:
+      /* Write deleted data - same as write data but mark sector as deleted */
+      if (ExecCmdPhase == FALSE) {
+        int_cause=2;
+        FDCCurrDrv = FDCCommand[1] & 3;
+        FDCCurrSide[FDCCurrDrv] = (FDCCommand[1] >> 2) & 1;
+        FDCCurrTrack[FDCCurrDrv] = FDCCommand[2];
+        ExecCmdPhase = TRUE;
+        if (dsk[FDCCurrDrv].fid <= 0) {
+          GetRes7();
+        }
+        else {
+          TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
+          {
+            int si = FindSectorByID(FDCCurrDrv, TrackIndex, FDCCommand[4], 0);
+            if (si < 0) {
+              st1 = 0x04;
+              st0_IC = 0x40;
+              GetRes7();
+              break;
+            }
+            /* Mark sector as deleted data */
+            dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].status2 |= 0x40;
+            TrackDataStart = GetSectorDataOffset(FDCCurrDrv, TrackIndex, si);
+            FDCDataLength = GetSectorDataLength(FDCCurrDrv, TrackIndex, si);
+          }
+          FDCDataPointer = 0;
+          StatusCounter = 100;
+          StatusRegister = 0xB0;
+          int_cause=1;
+          st0_IC=0x40;
+        }
+      }
+      else {
+        dsk[FDCCurrDrv].Tracks[TrackIndex].DiscData[TrackDataStart + FDCDataPointer] = Value;
+        FDCDataPointer ++;
+        if (FDCDataPointer==FDCDataLength) {
+          st0_IC=0x00;st0_SE=0x00;st0_EC=0;
+          GetRes7();
+        }
+      }
+      break;
 
     case 10:
-      /* read ID of next sector */
+      /* read ID of next sector — cycles through all sectors on the track */
       FDCCurrDrv = FDCCommand[1] & 3;
       FDCCurrSide[FDCCurrDrv] = (FDCCommand[1] >> 2) & 1;
       st0_SE = 0x00;
       st0_IC = 0x00;
-      GetRes7();
       if (dsk[FDCCurrDrv].fid > 0) {
         TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
-        FDCResult[5] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[0].sector;   /* 0x01=IBM, 0x41=Data, 0xC1=System */
+        int spt = dsk[FDCCurrDrv].Tracks[TrackIndex].SPT;
+        if (spt > 0) {
+          int si = FDCSectorIdx[FDCCurrDrv] % spt;
+          struct sector_info_type *sec = &dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si];
+          FDCCommand[2] = sec->track;   /* C */
+          FDCCommand[3] = sec->head;    /* H */
+          FDCCommand[4] = sec->sector;  /* R */
+          FDCCommand[5] = sec->BPS;     /* N */
+          FDCSectorIdx[FDCCurrDrv] = (si + 1) % spt;
+        }
+      }
+      GetRes7();
+      break;
+
+    case 12:
+      /* Read deleted data - same as read data but only reads deleted sectors */
+      FDCCurrDrv = FDCCommand[1] & 3;
+      FDCCurrSide[FDCCurrDrv] = (FDCCommand[1] >> 2) & 1;
+      FDCCurrTrack[FDCCurrDrv] = FDCCommand[2];
+      if (dsk[FDCCurrDrv].fid <= 0) {
+        GetRes7();
+      }
+      else {
+        ExecCmdPhase = TRUE;
+        int_cause=2;
+        TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
+        {
+          int si = FindSectorByID(FDCCurrDrv, TrackIndex, FDCCommand[4], 0);
+          if (si < 0) {
+            st1 = 0x04;
+            st0_IC = 0x40;
+            GetRes7();
+            break;
+          }
+          st1 |= dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].status1;
+          st2 |= dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].status2;
+          /* If sector does NOT have deleted mark, signal it */
+          if (!(dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].status2 & 0x40)) {
+            st2 |= 0x40; /* CM set = found non-deleted when looking for deleted */
+          }
+          TrackDataStart = GetSectorDataOffset(FDCCurrDrv, TrackIndex, si);
+          FDCDataLength = GetSectorDataLength(FDCCurrDrv, TrackIndex, si);
+          FDCCommand[2] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].track;
+          FDCCommand[3] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].head;
+          FDCCommand[4] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].sector;
+          FDCCommand[5] = dsk[FDCCurrDrv].Tracks[TrackIndex].sector[si].BPS;
+        }
+        FDCDataPointer = 0;
+        StatusCounter = 100;
+        StatusRegister = 0xF0;
       }
       break;
 
-    //case 12:
-    //  /* Read deleted data */
-    //  break;
-
-    // case 13:
-    //  /* Format a track */
-    //  FDCCurrDrv = FDCCommand[1] & 3;
-    //   FDCCurrSide[FDCCurrDrv] = (FDCCommand[1] >> 2) & 1;
-    //  if (dsk[FDCCurrDrv].fid > 0) {
-    //    TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
-    //    TrackDataStart = ((FDCCommand[4] & 0x0F)-1) << 9;
-    //    FDCDataLength = (dsk[FDCCurrDrv].Tracks[TrackIndex].BPS * dsk[FDCCurrDrv].Tracks[TrackIndex].SPT) << 9;
-    //    dsk[FDCCurrDrv].Tracks[TrackIndex].DiscData[TrackDataStart + FDCDataPointer];
-    //  }
-    //  GetRes7();
-    //  break;
+    case 13:
+      /* Format a track */
+      if (ExecCmdPhase == FALSE) {
+        FDCCurrDrv = FDCCommand[1] & 3;
+        FDCCurrSide[FDCCurrDrv] = (FDCCommand[1] >> 2) & 1;
+        if (dsk[FDCCurrDrv].fid <= 0 || FDCWrProtect[FDCCurrDrv]) {
+          if (FDCWrProtect[FDCCurrDrv]) st1 = 0x02; /* NW - not writable */
+          st0_IC = 0x40;
+          GetRes7();
+        }
+        else {
+          ExecCmdPhase = TRUE;
+          int_cause=2;
+          TrackIndex = FDCCurrTrack[FDCCurrDrv] * dsk[FDCCurrDrv].DiskHeader.nbof_heads + FDCCurrSide[FDCCurrDrv];
+          /* FDCCommand[2] = BPS (N), FDCCommand[3] = sectors/track,
+           * FDCCommand[4] = GAP3, FDCCommand[5] = filler byte */
+          FDCDataPointer = 0;
+          /* We expect 4 bytes per sector (C, H, R, N) from the host */
+          FDCDataLength = (unsigned long)FDCCommand[3] * 4;
+          StatusCounter = 100;
+          StatusRegister = 0xB0;     /* RQM=1, DIO=CPU->FDC, EXM=1, CB=1 */
+        }
+      }
+      else {
+        /* Receive CHRN data for each sector: C, H, R, N per sector */
+        static byte fmt_buf[29*4];
+        if (FDCDataPointer < sizeof(fmt_buf))
+          fmt_buf[FDCDataPointer] = Value;
+        FDCDataPointer++;
+        if (FDCDataPointer == FDCDataLength) {
+          /* Apply format: update track header and fill sectors */
+          struct track_type *trk = &dsk[FDCCurrDrv].Tracks[TrackIndex];
+          int nsectors = FDCCommand[3];
+          int sector_size = 128 << FDCCommand[2];
+          byte filler = FDCCommand[5];
+          trk->BPS = FDCCommand[2];
+          trk->SPT = nsectors;
+          trk->GAP3 = FDCCommand[4];
+          trk->filler = filler;
+          unsigned long data_off = 0;
+          int s;
+          for (s = 0; s < nsectors && s < 29; s++) {
+            trk->sector[s].track  = fmt_buf[s*4 + 0];
+            trk->sector[s].head   = fmt_buf[s*4 + 1];
+            trk->sector[s].sector = fmt_buf[s*4 + 2];
+            trk->sector[s].BPS    = fmt_buf[s*4 + 3];
+            trk->sector[s].status1 = 0;
+            trk->sector[s].status2 = 0;
+            trk->sector[s].data_len_lo = sector_size & 0xFF;
+            trk->sector[s].data_len_hi = (sector_size >> 8) & 0xFF;
+            /* Fill sector data with filler byte */
+            if (data_off + sector_size <= sizeof(trk->DiscData))
+              memset(&trk->DiscData[data_off], filler, sector_size);
+            data_off += sector_size;
+          }
+          st0_IC = 0x00; st0_SE = 0x00; st0_EC = 0;
+          GetRes7();
+        }
+      }
+      break;
 
     case 15:
       /* SEEK */
@@ -519,16 +693,58 @@ void ResetFDC (void) {
     ResultPhase = 0;
     StatusRegister = 128;
     int_cause=0;
-    for (i=0 ; i<1; i++) {
+    for (i=0 ; i<2; i++) {
       FDCCurrTrack[i] = 0;
       FDCWrProtect[i] = FALSE;
+      FDCSectorIdx[i] = 0;
     }
     for (i=0 ; i<7; i++) FDCCommand[i]=0;
     SeekTrack = FALSE;
     SeekTrackTime = 0.0;
     SeekTrackDrive = 0;
     st0_EC = 0;
+}
 
+/*********************************************************************/
+/* Extended DSK sector helper functions                              */
+/*********************************************************************/
+unsigned long GetSectorDataLength(int DrvNum, int trackIdx, int sectorIdx) {
+    struct track_type *trk = &dsk[DrvNum].Tracks[trackIdx];
+    if (dsk[DrvNum].extended) {
+        /* In extended DSK, the actual data length is in the sector info */
+        unsigned long len = trk->sector[sectorIdx].data_len_lo |
+                           (trk->sector[sectorIdx].data_len_hi << 8);
+        if (len == 0) {
+            /* Fallback to BPS field */
+            len = 128u << trk->sector[sectorIdx].BPS;
+        }
+        return len;
+    } else {
+        /* Standard DSK: all sectors same size from track header BPS */
+        return 128u << trk->BPS;
+    }
+}
+
+unsigned long GetSectorDataOffset(int DrvNum, int trackIdx, int sectorIdx) {
+    unsigned long offset = 0;
+    int i;
+    for (i = 0; i < sectorIdx; i++) {
+        offset += GetSectorDataLength(DrvNum, trackIdx, i);
+    }
+    return offset;
+}
+
+int FindSectorByID(int DrvNum, int trackIdx, byte sectorID, int startIdx) {
+    struct track_type *trk = &dsk[DrvNum].Tracks[trackIdx];
+    int spt = trk->SPT;
+    if (spt <= 0) return -1;
+    int i;
+    for (i = 0; i < spt; i++) {
+        int idx = (startIdx + i) % spt;
+        if (trk->sector[idx].sector == sectorID)
+            return idx;
+    }
+    return -1;
 }
 
 /*********************************************************************/
@@ -539,9 +755,11 @@ void InitDisc (void) {
     dsk[0].TrackSize = 194560;
     dsk[0].fid       = -1;   // No file loaded now
     dsk[0].Tracks    = (void *)CPC_LARGE_ALLOC (194560);
+    dsk[0].extended  = 0;
     dsk[1].TrackSize = 778240;
     dsk[1].fid       = -1;   // No file loaded now
     dsk[1].Tracks    = (void *)CPC_LARGE_ALLOC (778240);
+    dsk[1].extended  = 0;
     ResetFDC();
     RealDiscSeekTime=0;
 }
@@ -654,90 +872,146 @@ void InsertDisk (int DrvNum) {
   static unsigned long readbytes;
   static int      fid, wrprotect;
   static char     fname [255];
-  static byte     track,sector,sectorID;
+  static int      track;
   /**************************************************/
   /** Select a file via file dialog                **/
   /**************************************************/
   fid = SelectDiskFile (fname , &DrvNum, &wrprotect);
 
-  /*************************************************/
-  /** Wenn Datei ge�fnet werden konnte, dann den **/
-  /** Disk-header, alle Track-header (z.B. 40)    **/
-  /** sowie natrlich die Daten lesen.            **/
-  /*************************************************/
   if ( fid > 0 ) {
-    /**************************************************/
-    /** Prfen, ob bereits eine Image-Datei ge�fnet **/
-    /** ist. Wenn ja, dann diese schlie�n           **/
-    /**************************************************/
     WriteDskImage (DrvNum);
 
-    /**************************************************/
-    /** Dateiname, FileID und Schreibschtuz-Flag in  **/
-    /** die Struktur bnehmen.                       **/
-    /**************************************************/
     dsk[DrvNum].fid = fid;
     sprintf (dsk[DrvNum].ImageName, "%s", fname);
     FDCWrProtect[DrvNum] = wrprotect;
 
     /***********************************/
-    /** Disk-Header lesen (256 Bytes) **/
+    /** Read Disk-Header (256 Bytes)  **/
     /***********************************/
     read ( dsk[DrvNum].fid , &dsk[DrvNum].DiskHeader  , 0x100);
 
-    /*************************************************/
-    /** Anzahl der zu lesenden Bytes fr die Tracks **/
-    /** berechnet sich aus Tracks*Heads*(256+4608)  **/
-    /*************************************************/
-    readbytes = 0x1300 * dsk[DrvNum].DiskHeader.nbof_tracks * dsk[DrvNum].DiskHeader.nbof_heads;
-
-    /*************************************************/
-    /** Wenn der fr die Track-Header vom System    **/
-    /** angeforderte Speicherbereich zu klein ist,  **/
-    /** dann diesen frei geben und dies vermerken.  **/
-    /*************************************************/
-    if ( dsk[DrvNum].TrackSize < readbytes ) {
-        free (dsk[DrvNum].Tracks);
-        dsk[DrvNum].TrackSize = 0;
+    /* Detect Extended DSK format by checking the tag */
+    dsk[DrvNum].extended = 0;
+    if (dsk[DrvNum].DiskHeader.tag[0] == 'E' &&
+        dsk[DrvNum].DiskHeader.tag[1] == 'X' &&
+        dsk[DrvNum].DiskHeader.tag[2] == 'T') {
+      dsk[DrvNum].extended = 1;
     }
 
-    /**************************************************/
-    /** Wenn fr die Track-Header kein Speicher vor- **/
-    /** handen ist oder dieser zuvor freigegeben     **/
-    /** wurde, weil er zu klein war, dann erforder-  **/
-    /** lichen Speicher vom System anfordern.        **/
-    /**************************************************/
-    if ( dsk[DrvNum].TrackSize == 0 ) {
-        printf ("0 %7d\n", readbytes);
-        dsk[DrvNum].Tracks = (void *)CPC_LARGE_ALLOC (readbytes);
-        printf ("1\n");
+    int total_tracks = dsk[DrvNum].DiskHeader.nbof_tracks * dsk[DrvNum].DiskHeader.nbof_heads;
+
+    if (dsk[DrvNum].extended) {
+      /*******************************************************/
+      /** Extended DSK: per-track size table is at offset   **/
+      /** 0x34 in header. Each byte = high byte of track    **/
+      /** size (multiply by 256 to get actual size).        **/
+      /*******************************************************/
+      /* Calculate total size needed */
+      readbytes = (unsigned long)total_tracks * sizeof(struct track_type);
+
+      if ( dsk[DrvNum].TrackSize < readbytes ) {
+          /* On Pico, PSRAM allocations can't be freed/realloc'd easily.
+           * Only re-allocate if truly needed. */
+#ifndef PICO_BUILD
+          free (dsk[DrvNum].Tracks);
+#endif
+          dsk[DrvNum].TrackSize = 0;
+      }
+      if ( dsk[DrvNum].TrackSize == 0 ) {
+          dsk[DrvNum].Tracks = (void *)CPC_LARGE_ALLOC (readbytes);
+      }
+      dsk[DrvNum].TrackSize = readbytes;
+
+      /* Track size table starts at offset 0x34 in the disk header */
+      byte *track_size_table = &dsk[DrvNum].DiskHeader.unused[0];
+
+      for (track = 0; track < total_tracks; ++track) {
+        struct track_type* trackHeader = &dsk[DrvNum].Tracks[track];
+        unsigned int track_total_size = (unsigned int)track_size_table[track] * 256;
+
+        if (track_total_size == 0) {
+          /* Unformatted track */
+          memset(trackHeader, 0, sizeof(struct track_type));
+          continue;
+        }
+
+        /* Read track header (0x100 bytes) */
+        read(dsk[DrvNum].fid, trackHeader, 0x100);
+
+        /* Read all sector data sequentially (track_total_size - 0x100 bytes) */
+        unsigned int data_size = track_total_size - 0x100;
+        if (data_size > sizeof(trackHeader->DiscData))
+          data_size = sizeof(trackHeader->DiscData);
+        read(dsk[DrvNum].fid, trackHeader->DiscData, data_size);
+
+        /* Skip any remaining data that doesn't fit in our buffer */
+        if (track_total_size - 0x100 > data_size) {
+          unsigned int skip = (track_total_size - 0x100) - data_size;
+          /* Seek forward by reading and discarding */
+          byte discard[256];
+          while (skip > 0) {
+            unsigned int chunk = skip > 256 ? 256 : skip;
+            read(dsk[DrvNum].fid, discard, chunk);
+            skip -= chunk;
+          }
+        }
+      }
     }
-    dsk[DrvNum].TrackSize = readbytes;
-    //read ( dsk[DrvNum].fid , dsk[DrvNum].Tracks , readbytes);
+    else {
+      /*******************************************************/
+      /** Standard DSK: fixed track size                    **/
+      /*******************************************************/
+      readbytes = (unsigned long)dsk[DrvNum].DiskHeader.tracksize * total_tracks;
 
-    /*******************************************************/
-    /** Some disk images have interleaving sectors, so we **/
-    /** need to read tracks and sectors one by one and    **/
-    /** re-arrange the sectors within each track.         **/
-    /*******************************************************/
-    for (track=0; track < dsk[DrvNum].DiskHeader.nbof_tracks * dsk[DrvNum].DiskHeader.nbof_heads; ++track) {
+      if ( dsk[DrvNum].TrackSize < readbytes ) {
+#ifndef PICO_BUILD
+          free (dsk[DrvNum].Tracks);
+#endif
+          dsk[DrvNum].TrackSize = 0;
+      }
+      if ( dsk[DrvNum].TrackSize == 0 ) {
+          dsk[DrvNum].Tracks = (void *)CPC_LARGE_ALLOC (readbytes);
+      }
+      dsk[DrvNum].TrackSize = readbytes;
 
-      /* Where does this track start? */
-      struct track_type* trackHeader = & dsk[DrvNum].Tracks[track];
+      for (track = 0; track < total_tracks; ++track) {
+        struct track_type* trackHeader = &dsk[DrvNum].Tracks[track];
 
-      /* Read track header */
-      read (dsk[DrvNum].fid, trackHeader, 0x100);
+        /* Read track header */
+        read(dsk[DrvNum].fid, trackHeader, 0x100);
 
-      /*
-       * Read sectors and re-arrange. We assume that the first sector
-       * in the disk image is the one with the smallest ID within the track
-       */
-      for (sector=0; sector<9; sector++)
-        read (dsk[DrvNum].fid, (void*)trackHeader + 0x100 + 0x200 * ( trackHeader->sector[sector].sector - trackHeader->sector[0].sector ), 0x200);
+        /* Read sector data: use actual sector count and sizes */
+        int spt = trackHeader->SPT;
+        if (spt > 29) spt = 29;
+        int sector_size = 128 << trackHeader->BPS;
+        unsigned long data_offset = 0;
 
+        int sector;
+        for (sector = 0; sector < spt; sector++) {
+          /* Read sector data directly at sequential offset
+           * (no reordering — keep sectors in image order) */
+          if (data_offset + sector_size <= sizeof(trackHeader->DiscData)) {
+            read(dsk[DrvNum].fid, &trackHeader->DiscData[data_offset], sector_size);
+          }
+          data_offset += sector_size;
+        }
+
+        /* Skip any padding bytes to align with tracksize */
+        unsigned int expected_data = dsk[DrvNum].DiskHeader.tracksize - 0x100;
+        if (data_offset < expected_data) {
+          byte discard[256];
+          unsigned int skip = expected_data - data_offset;
+          while (skip > 0) {
+            unsigned int chunk = skip > 256 ? 256 : skip;
+            read(dsk[DrvNum].fid, discard, chunk);
+            skip -= chunk;
+          }
+        }
+      }
     }
 
     close ( dsk[DrvNum].fid );
+    FDCSectorIdx[DrvNum] = 0;
   }
   int_cause=4;
 }

@@ -30,14 +30,16 @@
 /*******************************/
 
 struct disc_header_type {
-  byte   tag[0x30];     /* 00-21  MV - CPC ...                                      */
+  byte   tag[0x30];     /* 00-21  MV - CPC ... or EXTENDED CPC DSK File             */
                         /* 22-2F  unused (0)                                        */
   byte   nbof_tracks;   /* 30     number of tracks (40)                             */
   byte   nbof_heads;    /* 31     number of heads (1) 2 not yet supported by cpcemu */
-  short  tracksize;	/*        short must be 16bit integer                       */ 
+  short  tracksize;	/*        short must be 16bit integer                       */
                         /* 32-33  tracksize (including 0x100 bytes header)          */
-                        /*        9 sectors * 0x200 bytes each + header = 0x1300    */ 
+                        /*        9 sectors * 0x200 bytes each + header = 0x1300    */
   byte   unused[0xcc];  /* 34-FF  unused (0)                                        */
+                        /*        For extended DSK: bytes 34-FF contain per-track   */
+                        /*        size table (high byte of track size for each track)*/
 }; 
  
 
@@ -52,7 +54,8 @@ struct sector_info_type {
   byte 	BPS;       /* 1B+i      BPS               /                         */
   byte 	status1;   /* 1C+i      status 1 errorcode (0)                      */
   byte 	status2;   /* 1D+i      status 2 errorcode (0)                      */
-  byte 	unused[2]; /* 1E+i,1F+i unused (0)                                  */
+  byte 	data_len_lo; /* 1E+i    Extended DSK: actual data length low byte   */
+  byte 	data_len_hi; /* 1F+i    Extended DSK: actual data length high byte  */
 }; 
  
 
@@ -67,11 +70,11 @@ struct track_type {
   
   /* Format-Track-Parameter: */ 
   byte                      BPS;               /* 14       BPS (bytes per sector) (2 for 0x200 Bytes)    */
-  byte                      SPT;               /* 15       SPT (sectors per track) (9, max. 18 possible) */
+  byte                      SPT;               /* 15       SPT (sectors per track) (9, max. 29 possible) */
   byte                      GAP3;              /* 16       GAP#3 Format (gap for formatting: 0x4E)       */
   byte                      filler;            /* 17       Filling-Byte (filler for formatting: 0xE5)    */
   struct sector_info_type   sector[29];
-  byte                      DiscData [4608];   /*          9 x 512 bytes Data                            */
+  byte                      DiscData [0x3000]; /* Up to 12KB data per track (covers extended DSK)        */
 } ; 
 
 
@@ -82,12 +85,26 @@ struct DskImg {
   struct disc_header_type DiskHeader;
   struct track_type       *Tracks;
   unsigned long           TrackSize;
+  int                     extended;          // 1 = Extended DSK format
 };
 
 extern byte FloppyMotor;
 extern word FDCPointer;
 extern float SeekTrackTime;
 extern struct DskImg dsk[2];
+
+/* Return the data offset within DiscData[] for a given sector index in a track.
+ * For standard DSK: sector_index * (128 << BPS).
+ * For extended DSK: sum of actual data lengths of preceding sectors. */
+unsigned long GetSectorDataOffset(int DrvNum, int trackIdx, int sectorIdx);
+
+/* Return the actual data length for a given sector in a track. */
+unsigned long GetSectorDataLength(int DrvNum, int trackIdx, int sectorIdx);
+
+/* Find the sector index within a track whose sector-ID field (R) matches
+ * the requested value. Returns -1 if not found. Starts searching from
+ * startIdx and wraps around. */
+int FindSectorByID(int DrvNum, int trackIdx, byte sectorID, int startIdx);
 
 void InsertDisk (int DrvNum);
 void WriteDskImage (int DrvNum);

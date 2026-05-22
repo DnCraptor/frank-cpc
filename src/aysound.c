@@ -27,6 +27,81 @@ FILE    *debug_snd = NULL;
 
 static uint32_t noise_seed = 1;
 
+/* ---- AY-3-8912 hardware envelope generator ---- */
+AYEnvelope ay_envelope;
+
+/* Log-amplitude table for envelope (same scale as log_ampl[]) */
+static const char env_ampl[16] = {0,3,4,5,7,9,11,13,17,21,26,33,41,51,64,80};
+
+/* Advance the envelope cycle by one step and return the current volume (0-15).
+ * Implements all 16 envelope shapes as per the AY datasheet. */
+static int envelope_next_volume(AYEnvelope *env, int shape) {
+    int vol;
+
+    /* Held states: cycle==256 → held at 0, cycle==512 → held at 15 */
+    if (env->cycle == 256) return 0;
+    if (env->cycle == 512) return 15;
+
+    shape &= 0x0F;
+
+    switch (shape) {
+        /* Shapes that count down: \_________ */
+        case 0: case 1: case 2: case 3:
+        case 8: case 9: case 11:
+            vol = 15 - env->cycle;
+            break;
+        /* Shapes that count up: /---------- */
+        case 4: case 5: case 6: case 7:
+        case 12: case 13: case 15:
+            vol = env->cycle;
+            break;
+        /* Alternating \/\/\/ */
+        case 10:
+            vol = (env->sign_10_14 == +1) ? (15 - env->cycle) : env->cycle;
+            break;
+        /* Alternating /\/\/\ */
+        case 14:
+            vol = (env->sign_10_14 == +1) ? env->cycle : (15 - env->cycle);
+            break;
+        default:
+            vol = 15;
+            break;
+    }
+
+    env->cycle++;
+    if (env->cycle == 16) {
+        switch (shape) {
+            /* Hold at 0 after first period */
+            case 0: case 1: case 2: case 3:
+            case 4: case 5: case 6: case 7:
+            case 9: case 15:
+                env->cycle = 256;
+                break;
+            /* Hold at 15 after first period */
+            case 11: case 13:
+                env->cycle = 512;
+                break;
+            /* Repeat (shapes 8, 10, 12, 14) */
+            default:
+                env->cycle = 0;
+                if (shape == 10 || shape == 14)
+                    env->sign_10_14 = -env->sign_10_14;
+                break;
+        }
+    }
+
+    return vol;
+}
+
+static void envelope_reset(AYEnvelope *env) {
+    env->cycle = 0;
+    env->sign_10_14 = +1;
+    env->counter = 0.0;
+    env->period = 0.0;
+    env->volume = 0;
+    env->shape_written = 0;
+}
+
 int init_dsp(void) {
     resetAYRegister();
 #ifdef HDMI_PIO_AUDIO
@@ -51,6 +126,7 @@ void resetAYRegister(void) {
         phase[i] = 1;
         new_note[i] = 0;
     }
+    envelope_reset(&ay_envelope);
 }
 
 /* Matches the Linux random_noise() distribution: returns 1 with 50% probability,
@@ -96,6 +172,29 @@ void mix_notes(char *AY_array_reg) {
         nsample[3] = fq[3] * random_noise();
     }
 
+    /* Envelope period: update from registers.
+     * CPC AY clock = 1 MHz; envelope period register value = fqe.
+     * Actual period in seconds = (fqe * 256) / 1000000.
+     * In samples: period_samples = (fqe * 256 * sample_rate) / 1000000.
+     * Envelope has 16 steps, so step_period = period_samples / 16.
+     * Writing to register 13 (shape) resets the envelope cycle. */
+    {
+        unsigned short fqe = cur_frame->fqe;
+        int shape = cur_frame->she & 0x0F;
+        /* Detect write to shape register (reg 13) — resets envelope */
+        static int last_shape = -1;
+        if (last_shape != shape || !ay_envelope.shape_written) {
+            ay_envelope.cycle = 0;
+            ay_envelope.sign_10_14 = +1;
+            ay_envelope.counter = 0.0;
+            ay_envelope.shape_written = 1;
+            last_shape = shape;
+        }
+        if (fqe == 0) fqe = 1;
+        /* Step period in samples: (fqe * 256) / 1_000_000 * sample_rate / 16 */
+        ay_envelope.period = ((double)fqe * 256.0 * sample_rate) / (1000000.0 * 16.0);
+    }
+
     for (i = 0; i < nb_samples; i++) {
         mix = 0;
 
@@ -106,16 +205,30 @@ void mix_notes(char *AY_array_reg) {
             nsample[3] += fq[3] * random_noise();
         }
 
+        /* Advance envelope counter */
+        ay_envelope.counter += 1.0;
+        while (ay_envelope.counter >= ay_envelope.period && ay_envelope.period > 0.0) {
+            ay_envelope.counter -= ay_envelope.period;
+            ay_envelope.volume = envelope_next_volume(&ay_envelope, cur_frame->she);
+        }
+
         for (j = 0; j < 3; j++) {
-            cur_frame->lv[j] = cur_frame->lv[j] & 0x0f;
+            int vol;
+            int use_envelope = cur_frame->lv[j] & 0x10;
+
+            if (use_envelope) {
+                vol = ay_envelope.volume;
+            } else {
+                vol = cur_frame->lv[j] & 0x0f;
+            }
 
             /* Noise channel contribution */
             if ((cur_frame->mix & bits[j + 3]) == 0) {
-                mix += ampnoise * log_ampl[cur_frame->lv[j]];
+                mix += ampnoise * (use_envelope ? env_ampl[vol] : log_ampl[vol]);
             }
 
             /* Tone channel: skip if period is 0 (no buzz) or volume is 0 */
-            if (fq[j] < 1.0 || cur_frame->lv[j] == 0) {
+            if (fq[j] < 1.0 || vol == 0) {
                 level = 0;
             } else {
                 amplitude  = phase[j];
@@ -132,7 +245,7 @@ void mix_notes(char *AY_array_reg) {
 
                 level = 0;
                 if (!(cur_frame->mix & bits[j]))
-                    level = amplitude * log_ampl[cur_frame->lv[j]];
+                    level = amplitude * (use_envelope ? env_ampl[vol] : log_ampl[vol]);
             }
 
             mix += level;
