@@ -40,6 +40,7 @@ typedef struct {
     char    autorun[64]; /* command to auto-type on boot, e.g. RUN"PRINCE */
     char    disk_a[128]; /* full path to disk image for drive A on boot   */
     char    disk_b[128]; /* full path to disk image for drive B on boot   */
+    char    tape[128];   /* full path to tape image (.cdt/.cas) on boot   */
 } cpc_settings_t;
 
 extern cpc_settings_t g_cpc_settings;

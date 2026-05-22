@@ -444,13 +444,6 @@ void tape_main(int ticks) {
     if (tape_type == TAPE_TYPE_NONE || !s_tape_motor)
         return;
 
-    static int dbg_calls = 0;
-    if (dbg_calls++ % 300 == 0) {
-        printf("tape: t=%d n=%d heads=%d tones=%d datas=%d waves=%d tails=%d kansas=%d status=%d step=%d pos=%d/%d\n",
-               tape_t, tape_n, tape_heads, tape_tones, tape_datas, tape_waves, tape_tails,
-               tape_kansas, tape_status, tape_step, tape_filetell, tape_filesize);
-    }
-
     /* Scale CPC ticks (4 MHz) to TZX ticks (3.5 MHz) via accumulator.
      * p = number of TZX sample periods elapsed. */
     int p = (tape_t += (ticks * tape_playback)) / TAPE_CPC_CLOCK;

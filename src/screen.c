@@ -110,6 +110,14 @@ static uint8_t g_frame_start_mode = 1;
 /* Per-row ink table, built from events at render time. */
 static uint8_t g_row_ink[CPC_FB_ROWS][17];
 
+/* Per-row border color for top/bottom padding rows.
+ * top_pad rows map to CPC scanlines (VBLANK - top_pad) .. (VBLANK - 1)
+ * bottom_pad rows map to CPC scanlines (VBLANK + 200) .. (VBLANK + 200 + bot_pad - 1) */
+#define CPC_TOP_PAD  20
+#define CPC_BOT_PAD  20
+static uint8_t g_border_top[CPC_TOP_PAD];
+static uint8_t g_border_bot[CPC_BOT_PAD];
+
 void pico_record_period_state(int period) {
   extern unsigned int DisplayMode;
   if (period >= 0 && period < 6) {
@@ -256,40 +264,134 @@ void pico_debug_crtc_events(void) {
  * scanline = frame_cycle / 256, fb_row = scanline - VBLANK_LINES */
 
 static void pico_build_row_ink_table(void) {
+  extern byte AktInk[];
   if (!g_ink_events_active || g_ink_event_count == 0) {
     for (int r = 0; r < CPC_FB_ROWS; r++)
       memcpy(g_row_ink[r], AktInk, 17);
+    memset(g_border_top, AktInk[16], CPC_TOP_PAD);
+    memset(g_border_bot, AktInk[16], CPC_BOT_PAD);
     return;
   }
 
-  /* Convert each event's frame_cycle to a framebuffer row. */
+  /* Convert each event's frame_cycle to a framebuffer row.
+   * Extended range: -CPC_TOP_PAD .. (CPC_FB_ROWS + CPC_BOT_PAD - 1) */
   int ev_row[INK_EVENT_MAX];
   for (int i = 0; i < g_ink_event_count; i++) {
     int scanline = (int)(g_ink_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
     ev_row[i] = scanline - CPC_VBLANK_LINES;
   }
 
-  /* Forward sweep: start from the ink state at frame start, apply events
-   * as we pass each row. */
+  /* Forward sweep from the top padding through the bottom padding.
+   * Row range: -CPC_TOP_PAD .. (CPC_FB_ROWS + CPC_BOT_PAD - 1) */
   uint8_t running_ink[17];
   memcpy(running_ink, g_frame_start_ink, 17);
 
   int ev_idx = 0;
-  for (int r = 0; r < CPC_FB_ROWS; r++) {
+  int first_row = -CPC_TOP_PAD;
+  int last_row = CPC_FB_ROWS + CPC_BOT_PAD;
+
+  for (int r = first_row; r < last_row; r++) {
     while (ev_idx < g_ink_event_count && ev_row[ev_idx] <= r) {
       running_ink[g_ink_events[ev_idx].ink_idx] = g_ink_events[ev_idx].value;
       ev_idx++;
     }
-    memcpy(g_row_ink[r], running_ink, 17);
+    if (r < 0) {
+      /* Top padding row */
+      g_border_top[r + CPC_TOP_PAD] = running_ink[16];
+    } else if (r < CPC_FB_ROWS) {
+      /* Active area row */
+      memcpy(g_row_ink[r], running_ink, 17);
+    } else {
+      /* Bottom padding row */
+      g_border_bot[r - CPC_FB_ROWS] = running_ink[16];
+    }
   }
 }
 
-/* Debug: buffer ALL frames with events, dump compact summary. */
-static int g_dbg_frame = 0;
+/* Return per-row border color arrays for top/bottom padding.
+ * These are filled by pico_build_row_ink_table(). */
+const uint8_t *pico_get_border_top(void) { return g_border_top; }
+const uint8_t *pico_get_border_bot(void) { return g_border_bot; }
 
 void pico_debug_ink_events(void) {
-  g_dbg_frame++;
-  (void)g_dbg_frame;
+  /* Stub — debug output removed. */
+}
+
+/* Render sub-scanline border colors into a row buffer.
+ * For rows where ink 16 (border) changes multiple times within the scanline,
+ * computes pixel-level color segments from the T-state positions of each OUT.
+ *
+ * On a real CPC the border is only visible in left/right margins (outside the
+ * 40-char active area).  Since the emulator's framebuffer covers exactly the
+ * active area (no margin columns), we render the border color pattern across
+ * the full row width.  This makes border-effect demos (like PRUEBA81) visible.
+ *
+ * Uses CPC_BORDER_VBLANK (separate from CPC_VBLANK_LINES) to map the border
+ * events to the correct vertical position matching real CPC hardware timing.
+ *
+ * Returns 1 if the row was rendered (caller should use the buffer), 0 if not. */
+
+/* On a real CPC, the Gate Array interrupt counter resets at VSync (scanline 240).
+ * Interrupt 2 fires at approximately scanline 32 from active area top.
+ * In the emulator, the same interrupt occurs at frame_cycle/256 ≈ 105.
+ * The mapping offset: 105 - 32 = 73 scanlines. */
+#define CPC_BORDER_VBLANK 73
+
+int pico_render_border_scanline(uint8_t *row_buf, int fb_row) {
+  if (!g_ink_events_active || g_ink_event_count == 0) return 0;
+
+  int target_scan = fb_row + CPC_BORDER_VBLANK;
+
+  /* Walk events to find:
+   * 1) The border color in effect at the start of this scanline
+   * 2) The first event index on this scanline */
+  uint8_t cur_border = g_frame_start_ink[16];
+  int first_on_scan = -1;
+  int border_ev_count = 0;
+
+  for (int i = 0; i < g_ink_event_count; i++) {
+    int scan = (int)(g_ink_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
+    if (scan < target_scan) {
+      if (g_ink_events[i].ink_idx == 16)
+        cur_border = g_ink_events[i].value;
+    } else if (scan == target_scan) {
+      if (first_on_scan < 0) first_on_scan = i;
+      if (g_ink_events[i].ink_idx == 16) border_ev_count++;
+    } else {
+      break;
+    }
+  }
+
+  /* Need at least 3 border events on one scanline to be a border effect.
+   * Normal programs rarely change ink 16 more than once per frame. */
+  if (border_ev_count < 3) return 0;
+
+  /* Render pixel segments: map each event's T-state position to a pixel X. */
+  int last_x = 0;
+  memset(row_buf, cur_border, CPC_FB_WIDTH);
+
+  for (int i = first_on_scan; i < g_ink_event_count; i++) {
+    int scan = (int)(g_ink_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
+    if (scan != target_scan) break;
+    if (g_ink_events[i].ink_idx != 16) continue;
+
+    int sub = (int)(g_ink_events[i].frame_cycle % CPC_TSTATES_PER_LINE);
+    int x = sub * CPC_FB_WIDTH / CPC_TSTATES_PER_LINE;
+    if (x < 0) x = 0;
+    if (x >= CPC_FB_WIDTH) x = CPC_FB_WIDTH - 1;
+
+    if (x > last_x)
+      memset(row_buf + last_x, cur_border, x - last_x);
+
+    cur_border = g_ink_events[i].value;
+    last_x = x;
+  }
+
+  /* Fill remaining pixels with the last border color */
+  if (last_x < CPC_FB_WIDTH)
+    memset(row_buf + last_x, cur_border, CPC_FB_WIDTH - last_x);
+
+  return 1;
 }
 
 /* Determine the dominant display mode (used for most of the screen). */
@@ -682,9 +784,18 @@ void RedrawScreenImage(void) {
   int use_row_ink = g_ink_events_active && g_ink_event_count > 0;
   if (use_row_ink) pico_build_row_ink_table();
 
-  memset(cpc_fb, AktInk[16], sizeof(cpc_fb));
   memset(g_dirty_rows, 0, sizeof(g_dirty_rows));
   g_in_redraw = 1;
+
+  /* Fill framebuffer background with border color.
+   * For border effects (per-row ink changes), use per-row border colors
+   * so the background of each row matches the CPC border on that scanline. */
+  if (use_row_ink) {
+    for (int r = 0; r < CPC_FB_ROWS; r++)
+      memset(cpc_fb[r], g_row_ink[r][16], CPC_FB_WIDTH);
+  } else {
+    memset(cpc_fb, AktInk[16], sizeof(cpc_fb));
+  }
 
   /* Use CRTC registers to determine the display layout.
    * Standard CPC: reg1=40 chars/row, reg6=25 rows.

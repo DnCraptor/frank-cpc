@@ -277,6 +277,13 @@ bool cpc_settings_load(void) {
             continue;
         }
 
+        /* tape — full path or filename relative to /cpc/disk/ */
+        if (strcmp(key, "tape") == 0) {
+            if (val[0] != '/') snprintf(g_cpc_settings.tape, sizeof(g_cpc_settings.tape), "/cpc/disk/%s", val);
+            else                strncpy(g_cpc_settings.tape, val, sizeof(g_cpc_settings.tape) - 1), g_cpc_settings.tape[sizeof(g_cpc_settings.tape) - 1] = 0;
+            continue;
+        }
+
         /* Numeric fields */
         for (int i = 0; i < INI_FIELD_COUNT; ++i) {
             if (strcmp(key, INI_FIELDS[i].key) == 0) {

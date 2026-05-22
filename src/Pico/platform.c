@@ -28,6 +28,7 @@
 #include "cpc_ui.h"
 #include "cpc_loader.h"
 #include "cpc_autotype.h"
+#include "cpc_tape_loader.h"
 #include "tape.h"
 
 #include <string.h>
@@ -131,10 +132,48 @@ void cpc_frame_present(void) {
     const int top_pad = (CPC_SCREEN_LINES - CPC_FB_HEIGHT) / 2; /* = 20 */
 
     uint8_t *dst = SCREEN[current_buffer];
-    memset(dst, border, (size_t)(CPC_FB_WIDTH * top_pad));
+
+    /* Top padding: use per-row border colors for border effects */
+    if (pico_has_ink_events()) {
+        const uint8_t *btop = pico_get_border_top();
+        uint8_t border_row[CPC_FB_WIDTH];
+        for (int r = 0; r < top_pad; r++) {
+            /* Try sub-scanline border rendering first (negative fb_row) */
+            if (pico_render_border_scanline(border_row, r - top_pad))
+                memcpy(dst + CPC_FB_WIDTH * r, border_row, CPC_FB_WIDTH);
+            else
+                memset(dst + CPC_FB_WIDTH * r, btop[r], CPC_FB_WIDTH);
+        }
+    } else {
+        memset(dst, border, (size_t)(CPC_FB_WIDTH * top_pad));
+    }
+
     memcpy(dst + CPC_FB_WIDTH * top_pad, cpc_fb, CPC_FB_WIDTH * CPC_FB_HEIGHT);
-    memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
-           (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
+
+    /* Sub-scanline border rendering: overwrite active-area rows where
+     * the border color changes rapidly within a single scanline.
+     * This makes border-effect demos (e.g. PRUEBA81) visible even though
+     * the framebuffer has no left/right border columns. */
+    if (pico_has_ink_events()) {
+        uint8_t border_row[CPC_FB_WIDTH];
+        for (int r = 0; r < CPC_FB_HEIGHT; r++) {
+            if (pico_render_border_scanline(border_row, r))
+                memcpy(dst + CPC_FB_WIDTH * (top_pad + r), border_row, CPC_FB_WIDTH);
+        }
+    }
+
+    /* Bottom padding: use per-row border colors for border effects */
+    if (pico_has_ink_events()) {
+        const uint8_t *bbot = pico_get_border_bot();
+        int bot_start = top_pad + CPC_FB_HEIGHT;
+        int bot_rows = CPC_SCREEN_LINES - bot_start;
+        for (int r = 0; r < bot_rows; r++)
+            memset(dst + CPC_FB_WIDTH * (bot_start + r),
+                   r < 20 ? bbot[r] : border, CPC_FB_WIDTH);
+    } else {
+        memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
+               (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
+    }
 
     /* Render settings overlay on top if visible */
     if (cpc_ui_is_visible())
@@ -516,6 +555,14 @@ void cpc_pico_main(void) {
     InitDisc();
     tape_init();                /* initialise tape engine + GPIO22 pin */
     cpc_disk_autoload();    /* load drivea.dsk / driveb.dsk if present */
+
+    /* Auto-mount tape if configured via tape= in /cpc/cpc.ini */
+    if (g_cpc_settings.tape[0]) {
+        if (cpc_mount_tape(g_cpc_settings.tape) == 0)
+            printf("tape: auto-mounted %s\n", g_cpc_settings.tape);
+        else
+            printf("tape: failed to mount %s\n", g_cpc_settings.tape);
+    }
     InitPrinter();
     init_dsp();
     ResetFDC();
