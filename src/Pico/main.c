@@ -47,7 +47,7 @@
 
 static uint8_t __attribute__((aligned(4))) screen_mem[2][FB_W * CPC_SCREEN_LINES];
 uint8_t *SCREEN[2] = { screen_mem[0], screen_mem[1] };
-volatile uint32_t current_buffer = 0;
+volatile uint32_t current_buffer = 1;  /* Start at 1: SCREEN[0] is the initial display buffer */
 
 uint8_t cpc_fb[FB_H][FB_W];
 
@@ -320,10 +320,10 @@ int main(void) {
                               CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
                               48000000);
     graphics_set_buffer(SCREEN[0]);
-    graphics_set_res(FB_W, FB_H);
+    graphics_set_res(FB_W, CPC_SCREEN_LINES);
     graphics_set_shift((320 - FB_W) / 2, 0);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
-    printf("Video initialized (VGA HSTX %dx%d)\n", FB_W, FB_H);
+    printf("Video initialized (VGA HSTX %dx%d)\n", FB_W, CPC_SCREEN_LINES);
 #endif
 
     FRESULT fr = f_mount(&g_fs, "", 1);
@@ -349,10 +349,10 @@ int main(void) {
     }
     graphics_init(g_out_HDMI);
     graphics_set_buffer(SCREEN[0]);
-    graphics_set_res(FB_W, FB_H);
+    graphics_set_res(FB_W, CPC_SCREEN_LINES);
     graphics_set_shift((320 - FB_W) / 2, 0);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
-    printf("Video initialized (%dx%d)\n", FB_W, FB_H);
+    printf("Video initialized (%dx%d)\n", FB_W, CPC_SCREEN_LINES);
 
     if (!SELECT_VGA) {
         multicore_launch_core1(frank_hdmi_run_core1);
@@ -373,10 +373,10 @@ int main(void) {
     }
     graphics_init(g_out_HDMI);
     graphics_set_buffer(SCREEN[0]);
-    graphics_set_res(FB_W, FB_H);
+    graphics_set_res(FB_W, CPC_SCREEN_LINES);
     graphics_set_shift((320 - FB_W) / 2, 0);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
-    printf("Video initialized (%dx%d)\n", FB_W, FB_H);
+    printf("Video initialized (%dx%d)\n", FB_W, CPC_SCREEN_LINES);
 
     multicore_launch_core1(render_core);
     while (!core1_ready) tight_loop_contents();

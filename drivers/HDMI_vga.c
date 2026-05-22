@@ -82,10 +82,10 @@
 #define VGA_BORDER  20
 
 /* Vertical border in *source* lines (each becomes 2 VGA scan lines).
- * Sacrifices 10 lines top + 10 bottom of the 240-line framebuffer so the
- * CPC content sits inside a 440-line (220-source) window with 40 VGA-line
- * margins on top and bottom — prevents monitor overscan from clipping. */
-#define VGA_BORDER_V 10
+ * The framebuffer already has 20-line top/bottom padding (CPC's 200 active
+ * lines centred in 240), so no extra ISR-level vertical border is needed.
+ * Setting this >0 would clip content like the UI status bar. */
+#define VGA_BORDER_V 0
 
 /* conv_color[] is defined in HDMI.c — VGA reuses its 4 KB buffer as
  * line-pattern storage when SELECT_VGA is active. */

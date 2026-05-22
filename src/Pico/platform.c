@@ -28,6 +28,7 @@
 #include "cpc_ui.h"
 #include "cpc_loader.h"
 #include "cpc_autotype.h"
+#include "tape.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -82,6 +83,32 @@ void cpc_init_palette(void) {
 }
 
 void cpc_frame_present(void) {
+#if !defined(VGA_HSTX)
+    /* VGA tearing prevention: wait until the VGA ISR has consumed the
+     * previous pending buffer (at VSync) before we start overwriting the
+     * back buffer.  Without this, the emulator can write to the buffer
+     * the ISR is still scanning out, causing visible tearing.
+     * In HDMI mode the VGA ISR doesn't run so pending_vga_fb is never
+     * consumed — skip the wait to avoid hanging. */
+    {
+        extern bool SELECT_VGA;
+        extern uint8_t * volatile pending_vga_fb;
+        if (SELECT_VGA) {
+            /* Wait until the VGA ISR has consumed the previous pending
+             * buffer at VSync.  Timeout after ~17ms (one VGA frame). */
+            for (int i = 0; i < 4000000 && pending_vga_fb; i++)
+                tight_loop_contents();
+            if (pending_vga_fb) {
+                /* VSync didn't fire in time — the previous buffer swap
+                 * was never consumed.  If we proceed, we'd write to the
+                 * buffer the ISR is currently scanning out (tearing).
+                 * Skip this frame presentation entirely. */
+                return;
+            }
+        }
+    }
+#endif
+
     /* AktInk[16] = CPC border ink index — use it for top/bottom padding so
      * the area surrounding the active image shows the correct CPC border
      * colour rather than grey (palette index 0). */
@@ -487,6 +514,7 @@ void cpc_pico_main(void) {
     InitScreen();
     InitKeyboard();
     InitDisc();
+    tape_init();                /* initialise tape engine + GPIO22 pin */
     cpc_disk_autoload();    /* load drivea.dsk / driveb.dsk if present */
     InitPrinter();
     init_dsp();
@@ -498,6 +526,42 @@ void cpc_pico_main(void) {
 
     printf("CPC initialized. Starting emulation...\n");
 
+    /* VGA test: type 30 random commands to trigger scrolling for tearing test */
+    cpc_autotype_set(
+        "HELLO WORLD\r"
+        "PRINT 1+2+3\r"
+        "ABCDEFGH\r"
+        "TESTING 123\r"
+        "QWERTY\r"
+        "SCROLLTEST\r"
+        "AAAA BBBB\r"
+        "ZXCVBNM\r"
+        "LKJHGFDS\r"
+        "POIUYTRE\r"
+        "MNBVCXZA\r"
+        "ASDFGHJK\r"
+        "QWERTYUI\r"
+        "ZXCVBNML\r"
+        "TESTLINE1\r"
+        "TESTLINE2\r"
+        "TESTLINE3\r"
+        "TESTLINE4\r"
+        "TESTLINE5\r"
+        "TESTLINE6\r"
+        "TESTLINE7\r"
+        "TESTLINE8\r"
+        "TESTLINE9\r"
+        "LINE TEN\r"
+        "LINE ELEVEN\r"
+        "LINE TWELVE\r"
+        "SCROLL MORE\r"
+        "KEEP GOING\r"
+        "ALMOST DONE\r"
+        "FINAL LINE\r",
+        500  /* boot delay = 10 seconds — gives time to start video capture */
+    );
+
+#if 0  /* Normal autorun — disabled for VGA testing */
     /* Arm auto-type if configured via autorun= in /cpc/cpc.ini.
      * \n in the string = 10-second pause (wait for disk load / title screen).
      * Boot delay of 200 frames = 4 s gives BASIC time to show the Ready prompt.
@@ -550,6 +614,7 @@ void cpc_pico_main(void) {
             }
         }
     }
+#endif
 
     RunZ80_cpc();
 
