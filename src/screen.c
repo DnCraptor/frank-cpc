@@ -444,12 +444,14 @@ void pico_prepare_border_effect(void) {
       if (g_border_row_count >= BORDER_ROW_MAX) break;
       uint8_t *row = g_border_rows[g_border_row_count];
 
-      /* Render all segments at correct proportions. */
+      /* Distribute 320 pixels evenly across all segments. */
       int base_w = CPC_FB_WIDTH / glen;
-      int extra = CPC_FB_WIDTH - base_w * glen;
+      int extra  = CPC_FB_WIDTH % glen;
+
       int x = 0;
       for (int j = 0; j < glen; j++) {
         int w = base_w + (j < extra ? 1 : 0);
+        if (x + w > CPC_FB_WIDTH) w = CPC_FB_WIDTH - x;
         if (w > 0) memset(row + x, grps[g].v[j], w);
         x += w;
       }

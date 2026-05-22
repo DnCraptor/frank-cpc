@@ -110,16 +110,7 @@ static void __not_in_flash("vga_blit") blit_cpc_frame(const uint8_t *src) {
         const uint8_t *srow = src + y * CPC_W;
         uint8_t *drow = vga_framebuffer + y * VGA_FB_W;
 
-        /* Left/right VGA margin colour.
-         * For top-padding rows the CPC border colour (`bg`) is the
-         * correct fill — it matches the blue set by the CPC program.
-         * The border-effect content fills 320px; the 20px VGA margins
-         * are just overscan padding and should use the same border. */
-        const uint8_t lbg = bg, rbg = bg;
-
-        /* Left border */
-        memset(drow, lbg, BORDER_L);
-
+        /* Palette-convert the CPC row into the VGA framebuffer. */
         uint8_t *dst = drow + BORDER_L;
         if (crt_active && (y & 1)) {
             memset(dst, 0, CPC_W);
@@ -136,6 +127,21 @@ static void __not_in_flash("vga_blit") blit_cpc_frame(const uint8_t *src) {
             for (; x < CPC_W; x++) dst[x] = pal[srow[x]];
         }
 
+        /* VGA margins: for border-effect rows (top padding), extend
+         * the edge pixel colours into the margins so the effect reaches
+         * the physical screen edges with no gap.  For normal rows use
+         * the CPC border colour. */
+        uint8_t lbg, rbg;
+        if (y < top_pad) {
+            lbg = dst[0];                /* leftmost palette-converted pixel */
+            rbg = dst[CPC_W - 1];        /* rightmost pixel */
+        } else {
+            lbg = bg;
+            rbg = bg;
+        }
+
+        /* Left border */
+        memset(drow, lbg, BORDER_L);
         /* Right border */
         memset(drow + BORDER_L + CPC_W, rbg, VGA_FB_W - BORDER_L - CPC_W);
     }
