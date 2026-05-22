@@ -16,6 +16,7 @@
 #include "dialogs.h"
 #include "cpc.h"
 #include "tape.h"
+#include "cpc_settings.h"
 
 char WorkDirectory[80];
 Z80 cpu;
@@ -109,14 +110,17 @@ word LoopZ80(register Z80 *R) {
     /* Skip rendering when palette is "blank" (all inks identical = game
      * hiding sprite updates behind a solid palette).
      * BUT: if there are mid-frame ink or CRTC events, the frame had
-     * visible content during the scan even if end-of-frame is blank. */
+     * visible content during the scan even if end-of-frame is blank.
+     * Also skip rendering entirely during fast tape load for speed. */
+    int fast_tape_active = g_cpc_settings.fast_tape
+                        && tape_is_loaded() && tape_get_motor();
     {
       int palette_blank = 1;
       for (i = 1; i <= 15; i++) {
         if (AktInk[i] != AktInk[0]) { palette_blank = 0; break; }
       }
       int has_mid_frame = pico_has_ink_events() || pico_has_crtc_events();
-      if (!palette_blank || has_mid_frame) {
+      if (!fast_tape_active && (!palette_blank || has_mid_frame)) {
         uint64_t t0 = time_us_64();
         if (ChangeInk || pico_has_ink_events() || pico_has_crtc_events()) {
           RedrawScreenImage();

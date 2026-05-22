@@ -86,6 +86,7 @@ cpc_settings_t g_cpc_settings = {
 static const char *MODEL_LABELS[]    = { "CPC 464", "CPC 664", "CPC 6128" };
 static const char *MEMORY_LABELS[]   = { "64 KB", "128 KB", "576 KB" };
 static const char *MONITOR_LABELS[]  = { "Color", "Green" };
+static const char *FAST_TAPE_LABELS[] = { "Off", "On" };
 static const char *CUSTOMER_LABELS[] = {
     "Amstrad", "Schneider", "ISP", "Triumph",
     "Saisho",  "Solavox",   "AWA", "Orion",
@@ -112,6 +113,7 @@ int cpc_settings_choices(cpc_setting_id_t id) {
         case CPC_SETTING_MONITOR:  return 2;
         case CPC_SETTING_CUSTOMER: return 8;
         case CPC_SETTING_AUDIO_IN: return 2;
+        case CPC_SETTING_FAST_TAPE: return 2;
         case CPC_SETTING_ROM:      return g_cpc_rom_count > 0 ? g_cpc_rom_count : 1;
         default: return 0;
     }
@@ -124,6 +126,7 @@ const char *cpc_settings_label(cpc_setting_id_t id) {
         case CPC_SETTING_MONITOR:  return "Monitor";
         case CPC_SETTING_CUSTOMER: return "Customer";
         case CPC_SETTING_AUDIO_IN: return "Audio In";
+        case CPC_SETTING_FAST_TAPE: return "Fast Tape";
         case CPC_SETTING_ROM:      return "ROM";
         default: return "?";
     }
@@ -136,6 +139,7 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
         case CPC_SETTING_MONITOR:  return MONITOR_LABELS[g_cpc_settings.monitor];
         case CPC_SETTING_CUSTOMER: return CUSTOMER_LABELS[g_cpc_settings.customer];
         case CPC_SETTING_AUDIO_IN: return tape_get_gpio_mode() ? "GPIO22" : "Off";
+        case CPC_SETTING_FAST_TAPE: return FAST_TAPE_LABELS[g_cpc_settings.fast_tape & 1];
         case CPC_SETTING_ROM: {
             uint8_t idx = g_cpc_settings.rom_idx;
             if (idx >= (uint8_t)g_cpc_rom_count) idx = 0;
@@ -146,7 +150,8 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
 }
 
 bool cpc_settings_needs_reset(cpc_setting_id_t id) {
-    return id != CPC_SETTING_MONITOR && id != CPC_SETTING_AUDIO_IN;
+    return id != CPC_SETTING_MONITOR && id != CPC_SETTING_AUDIO_IN
+        && id != CPC_SETTING_FAST_TAPE;
 }
 
 static void step_u8(uint8_t *v, int delta, int n) {
@@ -169,6 +174,9 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
         case CPC_SETTING_CUSTOMER: step_u8(&g_cpc_settings.customer, delta, n); break;
         case CPC_SETTING_AUDIO_IN:
             tape_set_gpio_mode(!tape_get_gpio_mode());
+            break;
+        case CPC_SETTING_FAST_TAPE:
+            step_u8(&g_cpc_settings.fast_tape, delta, n);
             break;
         case CPC_SETTING_ROM:      step_u8(&g_cpc_settings.rom_idx,  delta, n); break;
         default: break;
@@ -230,6 +238,7 @@ static const ini_field_t INI_FIELDS[] = {
     { "memory",   &g_cpc_settings.memory,   3 },
     { "monitor",  &g_cpc_settings.monitor,  2 },
     { "customer", &g_cpc_settings.customer, 8 },
+    { "fast_tape", &g_cpc_settings.fast_tape, 2 },
 };
 #define INI_FIELD_COUNT ((int)(sizeof(INI_FIELDS)/sizeof(INI_FIELDS[0])))
 

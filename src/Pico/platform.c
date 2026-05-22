@@ -203,6 +203,12 @@ void cpc_frame_sync(void) {
     if (g_next_frame_us == 0)
         g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
 
+    /* Fast tape: skip the timing wait while tape is loading */
+    if (g_cpc_settings.fast_tape && tape_is_loaded() && tape_get_motor()) {
+        g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
+        return;
+    }
+
     uint64_t now = time_us_64();
     if (now < g_next_frame_us) {
         while (time_us_64() < g_next_frame_us) tight_loop_contents();
