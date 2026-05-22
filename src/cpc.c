@@ -68,9 +68,15 @@ word LoopZ80(register Z80 *R) {
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
 
-  /* Advance tape playback by one interrupt period's worth of T-states. */
-  if (tape_is_loaded() && tape_get_motor())
-    tape_main(CPUZyklenBisInt);
+  /* Flush remaining tape T-states not yet consumed by Port B reads,
+   * then reset the per-period counter for the next interrupt period. */
+  if (tape_is_loaded() && tape_get_motor()) {
+    extern int tape_tstates_fed;
+    int remaining = CPUZyklenBisInt - tape_tstates_fed;
+    if (remaining > 0)
+      tape_main(remaining);
+    tape_tstates_fed = 0;
+  }
 
   pico_record_period_state(IRQCount - 1);
   cpc_ps2_feed_events();
@@ -152,25 +158,6 @@ word LoopZ80(register Z80 *R) {
     uint64_t now_us = time_us_64();
     if (hb_last_us == 0) hb_last_us = now_us;
     if (now_us - hb_last_us >= 1000000u) {
-      extern uint32_t pico_get_ink_event_total(void);
-      extern bool SELECT_VGA;
-      extern uint32_t vga_frame_number;
-      extern void vga_diag(uint32_t *out_ctrl_ch, uint32_t *out_data_ch, bool *out_ctrl_busy, bool *out_data_busy);
-      uint32_t vd_ctrl, vd_data;
-      bool vd_cb, vd_db;
-      vga_diag(&vd_ctrl, &vd_data, &vd_cb, &vd_db);
-      printf("[HB] fps=%lu  work_max=%lums  redraw=%lums(n=%lu)  skips=%lu  blank=%lu  ink_total=%lu  vga=%d  vfn=%lu  dma=%lu/%lu(%d%d)\n",
-             (unsigned long)hb_frames,
-             (unsigned long)(hb_max_work_us / 1000u),
-             (unsigned long)(hb_max_redraw_us / 1000u),
-             (unsigned long)hb_redraw_count,
-             (unsigned long)new_skips,
-             (unsigned long)hb_blank_count,
-             (unsigned long)pico_get_ink_event_total(),
-             (int)SELECT_VGA,
-             (unsigned long)vga_frame_number,
-             (unsigned long)vd_ctrl, (unsigned long)vd_data,
-             (int)vd_cb, (int)vd_db);
       hb_frames        = 0;
       hb_max_work_us   = 0;
       hb_max_redraw_us = 0;

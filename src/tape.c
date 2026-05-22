@@ -407,6 +407,8 @@ int tape_open(const char *path) {
 
     tape_filebase = tape_filetell;
     tape_safetydelay();
+    printf("tape: opened %s, type=%d, size=%d, base=%d\n",
+           path, tape_type, tape_filesize, tape_filebase);
     return 0;
 }
 
@@ -414,7 +416,13 @@ bool tape_is_loaded(void) {
     return tape_type != TAPE_TYPE_NONE || s_tape_gpio_mode;
 }
 
-void tape_set_motor(int on) { s_tape_motor = on ? 1 : 0; }
+void tape_set_motor(int on) {
+    int prev = s_tape_motor;
+    s_tape_motor = on ? 1 : 0;
+    if (prev != s_tape_motor)
+        printf("tape: motor %s (loaded=%d type=%d)\n",
+               on ? "ON" : "OFF", tape_type != TAPE_TYPE_NONE, tape_type);
+}
 int  tape_get_motor(void)   { return s_tape_motor; }
 
 void tape_set_gpio_mode(bool active) { s_tape_gpio_mode = active; }
@@ -435,6 +443,13 @@ int tape_get_status(void) {
 void tape_main(int ticks) {
     if (tape_type == TAPE_TYPE_NONE || !s_tape_motor)
         return;
+
+    static int dbg_calls = 0;
+    if (dbg_calls++ % 300 == 0) {
+        printf("tape: t=%d n=%d heads=%d tones=%d datas=%d waves=%d tails=%d kansas=%d status=%d step=%d pos=%d/%d\n",
+               tape_t, tape_n, tape_heads, tape_tones, tape_datas, tape_waves, tape_tails,
+               tape_kansas, tape_status, tape_step, tape_filetell, tape_filesize);
+    }
 
     /* Scale CPC ticks (4 MHz) to TZX ticks (3.5 MHz) via accumulator.
      * p = number of TZX sample periods elapsed. */

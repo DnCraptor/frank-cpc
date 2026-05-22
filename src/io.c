@@ -37,6 +37,11 @@ byte PioStatus;
 word AlterScrOffs;
 byte Customer;
 
+/* Tape timing: track how many T-states have been fed to the tape engine
+ * within the current CRTC interrupt period so we can advance the tape
+ * incrementally on each Port B read rather than in one bulk call. */
+int tape_tstates_fed;
+
 #ifdef PICO_BUILD
 /* Display mode tracks the game's intended screen mode, filtering out
  * writes from the CPC firmware interrupt handler.  The firmware handler
@@ -206,9 +211,26 @@ void OutZ80 (register word Port, register byte Value) {
     ok = TRUE;
   }
 
-  /* 0xF7xx: 8255 PIO status register   */
+  /* 0xF7xx: 8255 PIO control register   */
   if ((Port & 0x0B00)==0x0300) {
-    PioStatus = Value;
+    if (Value & 0x80) {
+      /* Mode set — store control word */
+      PioStatus = Value;
+    } else {
+      /* Bit Set/Reset (BSR) mode for Port C.
+       * Bits 3-1 = bit number, bit 0 = set(1)/reset(0). */
+      int bit = (Value >> 1) & 7;
+      if (Value & 1)
+        Pio_C |=  (1 << bit);
+      else
+        Pio_C &= ~(1 << bit);
+
+      /* Update keyboard row from lower nibble */
+      KeyRow = Pio_C & 15;
+
+      /* Cassette motor control: bit 4 of Port C */
+      tape_set_motor((Pio_C >> 4) & 1);
+    }
     ok = TRUE;
   }
 
@@ -250,8 +272,17 @@ byte InZ80 (register word Port) {
   if ((Port & 0x0B00)==0x0100) {
     /* Bit 7 = cassette data input (active-high when signal present) */
     byte b = Pio_B;
-    if (tape_is_loaded() && tape_get_motor())
+    if (tape_is_loaded() && tape_get_motor()) {
+      /* Advance tape to current T-state position so the signal is fresh. */
+      extern int CPUZyklenBisInt;
+      int elapsed = CPUZyklenBisInt - cpu.ICount;
+      int delta = elapsed - tape_tstates_fed;
+      if (delta > 0) {
+        tape_main(delta);
+        tape_tstates_fed = elapsed;
+      }
       b = (b & 0x7F) | (tape_get_status() ? 0x80 : 0x00);
+    }
     return b;
   }
 
