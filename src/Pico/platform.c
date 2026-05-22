@@ -112,9 +112,13 @@ void cpc_frame_present(void) {
 
     /* AktInk[16] = CPC border ink index — use it for top/bottom padding so
      * the area surrounding the active image shows the correct CPC border
-     * colour rather than grey (palette index 0). */
+     * colour rather than grey (palette index 0).
+     * When border effects are active, AktInk[16] may be overwritten by
+     * the effect (e.g. to black).  Use the frame-start value instead. */
     extern byte AktInk[];
-    const uint8_t border = (uint8_t)AktInk[16];
+    uint8_t border = (uint8_t)AktInk[16];
+    if (pico_has_ink_events() && pico_get_ink_event_count() > 10)
+        border = pico_get_frame_start_border();
 
     /* Update hardware background color for left/right borders */
     {

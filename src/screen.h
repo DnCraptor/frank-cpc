@@ -59,6 +59,7 @@ int  pico_render_border_scanline(uint8_t *row_buf, int fb_row);
 void pico_prepare_border_effect(void);
 int  pico_border_effect_rows(void);
 const uint8_t *pico_get_border_effect_row(int idx);
+uint8_t pico_get_frame_start_border(void);
 void pico_record_crtc_event(void);
 void pico_reset_crtc_events(void);
 int  pico_has_crtc_events(void);

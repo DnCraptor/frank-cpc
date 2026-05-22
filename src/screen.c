@@ -362,61 +362,100 @@ void pico_prepare_border_effect(void) {
 
   if (n < 6) return;  /* not a border effect */
 
-  /* Group events into calls by detecting gaps > 15 T-states.
+  /* Determine the effect's "reset" color — the most common value among
+   * events.  This is hw color 20 (black) in PRUEBA81, used between
+   * character stripes.  For rendering, we replace it with the CPC
+   * border color so it blends with the surrounding screen. */
+  uint8_t reset_val;
+  {
+    uint8_t counts[64];
+    memset(counts, 0, sizeof(counts));
+    for (int i = 0; i < n; i++) {
+      uint8_t v = vals[i];
+      if (v < 64 && counts[v] < 255) counts[v]++;
+    }
+    reset_val = vals[0]; uint8_t best_cnt = 0;
+    for (int i = 0; i < 64; i++) {
+      if (counts[i] > best_cnt) { best_cnt = counts[i]; reset_val = (uint8_t)i; }
+    }
+  }
+
+  /* The display background = CPC border color (ink 16 at frame start).
+   * Replace the effect's reset color with this so it matches the screen. */
+  uint8_t border_col = g_frame_start_ink[16];
+  for (int i = 0; i < n; i++) {
+    if (vals[i] == reset_val) vals[i] = border_col;
+  }
+
+  /* --- Pass 1: group events into calls by detecting gaps > 15 T-states ---
    * Normal OUTs within a call are 12 T-states apart.
    * CALL/RET overhead between calls adds ~27+ T-states. */
-  int grp_start = 0;
+  #define MAX_GROUPS 20
+  #define MAX_EV_PER_GRP 16
+  struct { uint8_t v[MAX_EV_PER_GRP]; int len; } grps[MAX_GROUPS];
+  int n_grps = 0;
+
+  int gs = 0;
   for (int i = 0; i <= n; i++) {
-    int is_boundary = (i == n) ||
-                      (i > grp_start && (cycs[i] - cycs[i-1]) > 15);
-    if (!is_boundary) continue;
+    int is_bound = (i == n) ||
+                   (i > gs && (cycs[i] - cycs[i-1]) > 15);
+    if (!is_bound) continue;
 
-    int grp_len = i - grp_start;
-    if (grp_len < 3) { grp_start = i; continue; }
-    if (g_border_row_count >= BORDER_ROW_MAX) break;
-
-    /* Render this call group as one row: equal-width segments.
-     * Trim trailing events that match the background color (they just
-     * reset the border after the content portion). This lets the
-     * visible content fill all the way to the right edge. */
-    uint8_t *row = g_border_rows[g_border_row_count];
-
-    /* Find the background color (most common = first event, typically blue) */
-    uint8_t bg_val = vals[grp_start];
-
-    /* Trim trailing background events */
-    int grp_end = i;
-    while (grp_end > grp_start + 1 && vals[grp_end - 1] == bg_val)
-      grp_end--;
-
-    /* Also trim leading background events */
-    int content_start = grp_start;
-    while (content_start < grp_end - 1 && vals[content_start] == bg_val)
-      content_start++;
-
-    int content_len = grp_end - content_start;
-    if (content_len < 2) { grp_start = i; continue; }
-
-    /* Fill entire row with background first */
-    memset(row, bg_val, CPC_FB_WIDTH);
-
-    /* Render content segments right-aligned */
-    int seg_w = CPC_FB_WIDTH / grp_len;  /* use original group len for sizing */
-    if (seg_w < 1) seg_w = 1;
-    int content_w = seg_w * content_len;
-    int x_off = CPC_FB_WIDTH - content_w;
-    if (x_off < 0) x_off = 0;
-
-    int x = x_off;
-    for (int j = content_start; j < grp_end; j++) {
-      int w = (j == grp_end - 1) ? (CPC_FB_WIDTH - x) : seg_w;
-      if (x + w > CPC_FB_WIDTH) w = CPC_FB_WIDTH - x;
-      if (w > 0) memset(row + x, vals[j], w);
-      x += w;
+    int glen = i - gs;
+    if (glen >= 3 && n_grps < MAX_GROUPS) {
+      if (glen > MAX_EV_PER_GRP) glen = MAX_EV_PER_GRP;
+      grps[n_grps].len = glen;
+      for (int j = 0; j < glen; j++)
+        grps[n_grps].v[j] = vals[gs + j];
+      n_grps++;
     }
+    gs = i;
+  }
 
-    g_border_row_count++;
-    grp_start = i;
+  if (n_grps < 3) return;
+
+  /* --- Pass 2: deduplicate consecutive identical groups ---
+   * The demo calls each OUT block 3× in a row; all 3 produce
+   * the same color pattern.  Keep only the first of each run. */
+  int unique[MAX_GROUPS];
+  int n_unique = 0;
+  unique[0] = 0; n_unique = 1;
+  for (int g = 1; g < n_grps; g++) {
+    int prev = unique[n_unique - 1];
+    if (grps[g].len != grps[prev].len ||
+        memcmp(grps[g].v, grps[prev].v, grps[g].len) != 0) {
+      unique[n_unique++] = g;
+    }
+  }
+
+  if (n_unique < 1) return;
+
+  /* --- Pass 3: render unique groups, scaled to fill the padding ---
+   * Each unique group becomes rows_per display rows.  This gives
+   * readable character proportions (e.g. 5 font rows × 4 = 20). */
+  int rows_per = BORDER_ROW_MAX / n_unique;
+  if (rows_per < 1) rows_per = 1;
+
+  for (int u = 0; u < n_unique; u++) {
+    int g = unique[u];
+    int glen = grps[g].len;
+
+    for (int dup = 0; dup < rows_per; dup++) {
+      if (g_border_row_count >= BORDER_ROW_MAX) break;
+      uint8_t *row = g_border_rows[g_border_row_count];
+
+      /* Render all segments at correct proportions. */
+      int base_w = CPC_FB_WIDTH / glen;
+      int extra = CPC_FB_WIDTH - base_w * glen;
+      int x = 0;
+      for (int j = 0; j < glen; j++) {
+        int w = base_w + (j < extra ? 1 : 0);
+        if (w > 0) memset(row + x, grps[g].v[j], w);
+        x += w;
+      }
+
+      g_border_row_count++;
+    }
   }
 }
 
@@ -435,6 +474,11 @@ const uint8_t *pico_get_border_effect_row(int idx) {
 int pico_render_border_scanline(uint8_t *row_buf, int fb_row) {
   (void)row_buf; (void)fb_row;
   return 0;
+}
+
+/* Return the border color recorded at frame start (before any effects). */
+uint8_t pico_get_frame_start_border(void) {
+  return g_frame_start_ink[16];
 }
 
 /* Determine the dominant display mode (used for most of the screen). */
