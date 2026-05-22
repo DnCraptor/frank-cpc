@@ -25,7 +25,16 @@ extern cpc_disk_entry_t *g_cpc_disk_entries;
 extern int               g_cpc_disk_entry_count;
 extern char              g_cpc_disk_dir[CPC_DISK_PATH_LEN];
 
-/* Scan g_cpc_disk_dir for .dsk files and subdirs. Returns entry count. */
+/* File type filter for the browser. */
+typedef enum {
+    CPC_FILTER_DISK = 0,  /* show .dsk files only */
+    CPC_FILTER_TAPE,      /* show .cdt/.cas files only */
+} cpc_filter_t;
+
+/* Set the file type filter for subsequent cpc_disk_rescan() calls. */
+void cpc_disk_set_filter(cpc_filter_t filter);
+
+/* Scan g_cpc_disk_dir for media files and subdirs. Returns entry count. */
 int cpc_disk_rescan(void);
 
 /* Enter a subdirectory by name; rescans. Returns new entry count or -1. */

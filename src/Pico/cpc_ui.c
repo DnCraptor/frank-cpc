@@ -112,6 +112,7 @@ static void open_browser_for(int drv) {
     s_disk_row    = 0;
     s_disk_scroll = 0;
     s_disk_msg[0] = '\0';
+    cpc_disk_set_filter(drv < 2 ? CPC_FILTER_DISK : CPC_FILTER_TAPE);
     cpc_disk_rescan();
     s_state = UI_DISK_BROWSER;
 }

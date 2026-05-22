@@ -61,6 +61,20 @@ static int is_media(const char *name) {
     return is_dsk(name) || is_tape(name);
 }
 
+static cpc_filter_t g_filter = CPC_FILTER_DISK;
+
+void cpc_disk_set_filter(cpc_filter_t filter) {
+    g_filter = filter;
+}
+
+static int matches_filter(const char *name) {
+    switch (g_filter) {
+        case CPC_FILTER_DISK: return is_dsk(name);
+        case CPC_FILTER_TAPE: return is_tape(name);
+        default:              return is_media(name);
+    }
+}
+
 static int cmp_entry(const void *pa, const void *pb) {
     const cpc_disk_entry_t *a = (const cpc_disk_entry_t *)pa;
     const cpc_disk_entry_t *b = (const cpc_disk_entry_t *)pb;
@@ -91,7 +105,7 @@ int cpc_disk_rescan(void) {
         if (fi.fname[0] == '.') continue;
 
         bool is_dir = (fi.fattrib & AM_DIR) != 0;
-        if (!is_dir && !is_media(fi.fname)) continue;
+        if (!is_dir && !matches_filter(fi.fname)) continue;
 
         size_t n = strlen(fi.fname);
         if (n >= CPC_DISK_FILENAME_LEN) continue;
