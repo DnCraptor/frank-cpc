@@ -100,12 +100,27 @@ static void __not_in_flash("vga_blit") blit_cpc_frame(const uint8_t *src) {
     const uint8_t *pal = pal_rgb332;
     const uint8_t bg = border_rgb332;
 
+    /* Top padding occupies rows 0..19 of the 240-row source buffer.
+     * For border-effect rows the edge pixels carry meaningful colour;
+     * extend them into the left/right VGA margins so the effect reaches
+     * the screen edges instead of showing black gaps. */
+    const int top_pad = 20;
+
     for (int y = 0; y < CPC_H; y++) {
         const uint8_t *srow = src + y * CPC_W;
         uint8_t *drow = vga_framebuffer + y * VGA_FB_W;
 
+        /* Determine left/right border colour for this row.
+         * For top-padding rows, use the edge palette indices so the
+         * border effect extends seamlessly to the screen edges. */
+        uint8_t lbg = bg, rbg = bg;
+        if (y < top_pad) {
+            lbg = pal[srow[0]];
+            rbg = pal[srow[CPC_W - 1]];
+        }
+
         /* Left border */
-        memset(drow, bg, BORDER_L);
+        memset(drow, lbg, BORDER_L);
 
         uint8_t *dst = drow + BORDER_L;
         if (crt_active && (y & 1)) {
@@ -124,7 +139,7 @@ static void __not_in_flash("vga_blit") blit_cpc_frame(const uint8_t *src) {
         }
 
         /* Right border */
-        memset(drow + BORDER_L + CPC_W, bg, VGA_FB_W - BORDER_L - CPC_W);
+        memset(drow + BORDER_L + CPC_W, rbg, VGA_FB_W - BORDER_L - CPC_W);
     }
 }
 

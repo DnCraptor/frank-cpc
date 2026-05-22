@@ -133,15 +133,28 @@ void cpc_frame_present(void) {
 
     uint8_t *dst = SCREEN[current_buffer];
 
-    /* Top padding: use per-row border colors for border effects */
+    /* Top padding: use border effect rows or per-row border colors */
     if (pico_has_ink_events()) {
-        const uint8_t *btop = pico_get_border_top();
-        uint8_t border_row[CPC_FB_WIDTH];
-        for (int r = 0; r < top_pad; r++) {
-            /* Try sub-scanline border rendering first (negative fb_row) */
-            if (pico_render_border_scanline(border_row, r - top_pad))
-                memcpy(dst + CPC_FB_WIDTH * r, border_row, CPC_FB_WIDTH);
-            else
+        /* Pre-render border effect rows (grouped by CALL, not by scanline) */
+        pico_prepare_border_effect();
+        int n_eff = pico_border_effect_rows();
+        if (n_eff > 0) {
+            /* Centre the border effect rows vertically in the top padding */
+            int start_row = (top_pad - n_eff) / 2;
+            if (start_row < 0) start_row = 0;
+            const uint8_t *btop = pico_get_border_top();
+            for (int r = 0; r < top_pad; r++) {
+                int eff_idx = r - start_row;
+                const uint8_t *eff = (eff_idx >= 0 && eff_idx < n_eff)
+                    ? pico_get_border_effect_row(eff_idx) : NULL;
+                if (eff)
+                    memcpy(dst + CPC_FB_WIDTH * r, eff, CPC_FB_WIDTH);
+                else
+                    memset(dst + CPC_FB_WIDTH * r, btop[r], CPC_FB_WIDTH);
+            }
+        } else {
+            const uint8_t *btop = pico_get_border_top();
+            for (int r = 0; r < top_pad; r++)
                 memset(dst + CPC_FB_WIDTH * r, btop[r], CPC_FB_WIDTH);
         }
     } else {
@@ -150,17 +163,8 @@ void cpc_frame_present(void) {
 
     memcpy(dst + CPC_FB_WIDTH * top_pad, cpc_fb, CPC_FB_WIDTH * CPC_FB_HEIGHT);
 
-    /* Sub-scanline border rendering: overwrite active-area rows where
-     * the border color changes rapidly within a single scanline.
-     * This makes border-effect demos (e.g. PRUEBA81) visible even though
-     * the framebuffer has no left/right border columns. */
-    if (pico_has_ink_events()) {
-        uint8_t border_row[CPC_FB_WIDTH];
-        for (int r = 0; r < CPC_FB_HEIGHT; r++) {
-            if (pico_render_border_scanline(border_row, r))
-                memcpy(dst + CPC_FB_WIDTH * (top_pad + r), border_row, CPC_FB_WIDTH);
-        }
-    }
+    /* No longer need per-scanline border rendering in active area —
+     * border effect is rendered in top padding via call-grouped rows. */
 
     /* Bottom padding: use per-row border colors for border effects */
     if (pico_has_ink_events()) {

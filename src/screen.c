@@ -317,81 +317,124 @@ void pico_debug_ink_events(void) {
   /* Stub — debug output removed. */
 }
 
-/* Render sub-scanline border colors into a row buffer.
- * For rows where ink 16 (border) changes multiple times within the scanline,
- * computes pixel-level color segments from the T-state positions of each OUT.
+/* ---- Border effect rendering (call-grouped) ----
  *
- * On a real CPC the border is only visible in left/right margins (outside the
- * 40-char active area).  Since the emulator's framebuffer covers exactly the
- * active area (no margin columns), we render the border color pattern across
- * the full row width.  This makes border-effect demos (like PRUEBA81) visible.
+ * Border effects like PRUEBA81 use a rapid sequence of OUT (C),reg
+ * instructions to change the border color many times per scanline.
+ * On a real CPC the effect is visible only in the narrow left/right
+ * border margins, but since the emulator's framebuffer has no margin
+ * columns we render the color pattern across the full row width.
  *
- * Uses CPC_BORDER_VBLANK (separate from CPC_VBLANK_LINES) to map the border
- * events to the correct vertical position matching real CPC hardware timing.
+ * The demo calls subroutines of 14 consecutive OUTs (each 12 T-states
+ * apart).  Because each call (~195 T-states) doesn't align to scanline
+ * boundaries (256 T-states), events from different calls can straddle
+ * the same scanline.  Rendering per-scanline creates artifacts.
  *
- * Returns 1 if the row was rendered (caller should use the buffer), 0 if not. */
+ * Instead, we group border events by CALL: any gap > 15 T-states
+ * between consecutive border events signals a call boundary.  Each
+ * group of events is rendered as one display row, with equal-width
+ * segments filling 320 pixels.  The resulting rows are cached and
+ * read back by cpc_frame_present().
+ */
 
-/* On a real CPC, the Gate Array interrupt counter resets at VSync (scanline 240).
- * Interrupt 2 fires at approximately scanline 32 from active area top.
- * In the emulator, the same interrupt occurs at frame_cycle/256 ≈ 105.
- * The mapping offset: 105 - 32 = 73 scanlines. */
-#define CPC_BORDER_VBLANK 73
+#define BORDER_ROW_MAX 20
+static uint8_t g_border_rows[BORDER_ROW_MAX][CPC_FB_WIDTH];
+static int g_border_row_count = 0;
 
-int pico_render_border_scanline(uint8_t *row_buf, int fb_row) {
-  if (!g_ink_events_active || g_ink_event_count == 0) return 0;
+/* Call once per frame (after emulation, before present) to pre-render
+ * all border effect rows from the recorded ink events. */
+void pico_prepare_border_effect(void) {
+  g_border_row_count = 0;
 
-  int target_scan = fb_row + CPC_BORDER_VBLANK;
+  if (!g_ink_events_active || g_ink_event_count < 6) return;
 
-  /* Walk events to find:
-   * 1) The border color in effect at the start of this scanline
-   * 2) The first event index on this scanline */
-  uint8_t cur_border = g_frame_start_ink[16];
-  int first_on_scan = -1;
-  int border_ev_count = 0;
-
-  for (int i = 0; i < g_ink_event_count; i++) {
-    int scan = (int)(g_ink_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
-    if (scan < target_scan) {
-      if (g_ink_events[i].ink_idx == 16)
-        cur_border = g_ink_events[i].value;
-    } else if (scan == target_scan) {
-      if (first_on_scan < 0) first_on_scan = i;
-      if (g_ink_events[i].ink_idx == 16) border_ev_count++;
-    } else {
-      break;
+  /* Collect all border (ink 16) events. */
+  uint8_t vals[INK_EVENT_MAX];
+  uint32_t cycs[INK_EVENT_MAX];
+  int n = 0;
+  for (int i = 0; i < g_ink_event_count && n < INK_EVENT_MAX; i++) {
+    if (g_ink_events[i].ink_idx == 16) {
+      vals[n] = g_ink_events[i].value;
+      cycs[n] = g_ink_events[i].frame_cycle;
+      n++;
     }
   }
 
-  /* Need at least 3 border events on one scanline to be a border effect.
-   * Normal programs rarely change ink 16 more than once per frame. */
-  if (border_ev_count < 3) return 0;
+  if (n < 6) return;  /* not a border effect */
 
-  /* Render pixel segments: map each event's T-state position to a pixel X. */
-  int last_x = 0;
-  memset(row_buf, cur_border, CPC_FB_WIDTH);
+  /* Group events into calls by detecting gaps > 15 T-states.
+   * Normal OUTs within a call are 12 T-states apart.
+   * CALL/RET overhead between calls adds ~27+ T-states. */
+  int grp_start = 0;
+  for (int i = 0; i <= n; i++) {
+    int is_boundary = (i == n) ||
+                      (i > grp_start && (cycs[i] - cycs[i-1]) > 15);
+    if (!is_boundary) continue;
 
-  for (int i = first_on_scan; i < g_ink_event_count; i++) {
-    int scan = (int)(g_ink_events[i].frame_cycle / CPC_TSTATES_PER_LINE);
-    if (scan != target_scan) break;
-    if (g_ink_events[i].ink_idx != 16) continue;
+    int grp_len = i - grp_start;
+    if (grp_len < 3) { grp_start = i; continue; }
+    if (g_border_row_count >= BORDER_ROW_MAX) break;
 
-    int sub = (int)(g_ink_events[i].frame_cycle % CPC_TSTATES_PER_LINE);
-    int x = sub * CPC_FB_WIDTH / CPC_TSTATES_PER_LINE;
-    if (x < 0) x = 0;
-    if (x >= CPC_FB_WIDTH) x = CPC_FB_WIDTH - 1;
+    /* Render this call group as one row: equal-width segments.
+     * Trim trailing events that match the background color (they just
+     * reset the border after the content portion). This lets the
+     * visible content fill all the way to the right edge. */
+    uint8_t *row = g_border_rows[g_border_row_count];
 
-    if (x > last_x)
-      memset(row_buf + last_x, cur_border, x - last_x);
+    /* Find the background color (most common = first event, typically blue) */
+    uint8_t bg_val = vals[grp_start];
 
-    cur_border = g_ink_events[i].value;
-    last_x = x;
+    /* Trim trailing background events */
+    int grp_end = i;
+    while (grp_end > grp_start + 1 && vals[grp_end - 1] == bg_val)
+      grp_end--;
+
+    /* Also trim leading background events */
+    int content_start = grp_start;
+    while (content_start < grp_end - 1 && vals[content_start] == bg_val)
+      content_start++;
+
+    int content_len = grp_end - content_start;
+    if (content_len < 2) { grp_start = i; continue; }
+
+    /* Fill entire row with background first */
+    memset(row, bg_val, CPC_FB_WIDTH);
+
+    /* Render content segments right-aligned */
+    int seg_w = CPC_FB_WIDTH / grp_len;  /* use original group len for sizing */
+    if (seg_w < 1) seg_w = 1;
+    int content_w = seg_w * content_len;
+    int x_off = CPC_FB_WIDTH - content_w;
+    if (x_off < 0) x_off = 0;
+
+    int x = x_off;
+    for (int j = content_start; j < grp_end; j++) {
+      int w = (j == grp_end - 1) ? (CPC_FB_WIDTH - x) : seg_w;
+      if (x + w > CPC_FB_WIDTH) w = CPC_FB_WIDTH - x;
+      if (w > 0) memset(row + x, vals[j], w);
+      x += w;
+    }
+
+    g_border_row_count++;
+    grp_start = i;
   }
+}
 
-  /* Fill remaining pixels with the last border color */
-  if (last_x < CPC_FB_WIDTH)
-    memset(row_buf + last_x, cur_border, CPC_FB_WIDTH - last_x);
+/* Return the number of pre-rendered border effect rows. */
+int pico_border_effect_rows(void) {
+  return g_border_row_count;
+}
 
-  return 1;
+/* Get a pointer to pre-rendered border row (0-based index). */
+const uint8_t *pico_get_border_effect_row(int idx) {
+  if (idx < 0 || idx >= g_border_row_count) return NULL;
+  return g_border_rows[idx];
+}
+
+/* Legacy per-scanline API — kept for compatibility but now unused. */
+int pico_render_border_scanline(uint8_t *row_buf, int fb_row) {
+  (void)row_buf; (void)fb_row;
+  return 0;
 }
 
 /* Determine the dominant display mode (used for most of the screen). */
