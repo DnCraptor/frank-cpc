@@ -6,6 +6,7 @@
  */
 
 #include "cpc_settings.h"
+#include "tape.h"
 #include "ff.h"
 
 /* CPC subsystem headers needed for apply/reset */
@@ -110,6 +111,7 @@ int cpc_settings_choices(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return 3;
         case CPC_SETTING_MONITOR:  return 2;
         case CPC_SETTING_CUSTOMER: return 8;
+        case CPC_SETTING_AUDIO_IN: return 2;
         case CPC_SETTING_ROM:      return g_cpc_rom_count > 0 ? g_cpc_rom_count : 1;
         default: return 0;
     }
@@ -121,6 +123,7 @@ const char *cpc_settings_label(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return "Memory";
         case CPC_SETTING_MONITOR:  return "Monitor";
         case CPC_SETTING_CUSTOMER: return "Customer";
+        case CPC_SETTING_AUDIO_IN: return "Audio In";
         case CPC_SETTING_ROM:      return "ROM";
         default: return "?";
     }
@@ -132,6 +135,7 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return MEMORY_LABELS[g_cpc_settings.memory];
         case CPC_SETTING_MONITOR:  return MONITOR_LABELS[g_cpc_settings.monitor];
         case CPC_SETTING_CUSTOMER: return CUSTOMER_LABELS[g_cpc_settings.customer];
+        case CPC_SETTING_AUDIO_IN: return tape_get_gpio_mode() ? "GPIO22" : "Off";
         case CPC_SETTING_ROM: {
             uint8_t idx = g_cpc_settings.rom_idx;
             if (idx >= (uint8_t)g_cpc_rom_count) idx = 0;
@@ -142,7 +146,7 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
 }
 
 bool cpc_settings_needs_reset(cpc_setting_id_t id) {
-    return id != CPC_SETTING_MONITOR;
+    return id != CPC_SETTING_MONITOR && id != CPC_SETTING_AUDIO_IN;
 }
 
 static void step_u8(uint8_t *v, int delta, int n) {
@@ -163,6 +167,9 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
             cpc_settings_apply_visual();
             break;
         case CPC_SETTING_CUSTOMER: step_u8(&g_cpc_settings.customer, delta, n); break;
+        case CPC_SETTING_AUDIO_IN:
+            tape_set_gpio_mode(!tape_get_gpio_mode());
+            break;
         case CPC_SETTING_ROM:      step_u8(&g_cpc_settings.rom_idx,  delta, n); break;
         default: break;
     }

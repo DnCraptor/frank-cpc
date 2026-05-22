@@ -64,8 +64,8 @@ static int        s_setting_row      = 0;
 static int        s_settings_scroll  = 0;
 
 /* Disk menu state */
-static int        s_menu_row         = 0;   /* 0=Drive A, 1=Drive B, 2=Tape, 3=GPIO22 */
-#define MENU_ROWS 4
+static int        s_menu_row         = 0;   /* 0=Drive A, 1=Drive B, 2=Tape */
+#define MENU_ROWS 3
 
 /* Disk browser state */
 static int        s_disk_drive       = 0;
@@ -216,9 +216,6 @@ static bool handle_disk_menu_key(unsigned int ks) {
                 } else {
                     open_browser_for(2); /* 2 = tape mode */
                 }
-            } else if (s_menu_row == 3) {
-                /* Toggle GPIO22 tape input */
-                tape_set_gpio_mode(!tape_get_gpio_mode());
             }
             return true;
         default:
@@ -503,13 +500,6 @@ static void render_disk_menu(uint8_t *fb, int stride) {
                 ui_draw_string(fb, stride, nx, y + 2, empty,
                                sel ? UI_COLOR_ACCENT_FG : UI_COLOR_DIM);
             }
-        } else if (row == 3) {
-            /* GPIO22 tape input toggle */
-            ui_draw_string(fb, stride, x + 4, y + 2, "Audio In:", fg);
-
-            const char *val = tape_get_gpio_mode() ? "GPIO22" : "Off";
-            int nx = x + cw - 4 - (int)strlen(val) * UI_CHAR_W;
-            ui_draw_string(fb, stride, nx, y + 2, val, fg);
         }
 
         y += UI_LINE_H + 4;
