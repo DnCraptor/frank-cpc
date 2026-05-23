@@ -186,6 +186,7 @@ void set_palette(uint8_t n)  { (void)n;   }
 
 /* I2S ring buffer (defined in main.c) — used as VGA audio fallback. */
 extern unsigned i2s_ring_push(const int16_t *samples, unsigned count);
+extern unsigned i2s_ring_push_stereo(const int16_t *samples, unsigned count);
 extern unsigned i2s_ring_free(void);
 
 /*

@@ -21,6 +21,17 @@
 extern char g_cpc_rom_list[CPC_ROM_MAX][32];
 extern int  g_cpc_rom_count;   /* includes the "Auto" entry */
 
+/* Audio-output backend. I2S targets the external DAC on GP9/10/11;
+ * PWM drives GP10/11 through an RC filter. Both SHARE the same GPIOs,
+ * so switching between them re-configures pin function. HDMI is only
+ * reachable on HDMI_PIO_AUDIO builds. */
+typedef enum {
+    CPC_AUDIO_I2S = 0,
+    CPC_AUDIO_PWM,
+    CPC_AUDIO_HDMI,         /* HDMI_PIO_AUDIO builds only */
+    CPC_AUDIO_COUNT
+} cpc_audio_driver_t;
+
 typedef enum {
     CPC_SETTING_MODEL = 0,  /* CPC 464 / 664 / 6128          (needs reset) */
     CPC_SETTING_MEMORY,     /* 64K / 128K / 576K              (needs reset) */
@@ -29,6 +40,7 @@ typedef enum {
     CPC_SETTING_AUDIO_IN,   /* Off / GPIO22                   (live)        */
     CPC_SETTING_FAST_TAPE,  /* Off / On — skip frame sync     (live)        */
     CPC_SETTING_STEREO,     /* Mono / ACB / ABC               (live)        */
+    CPC_SETTING_AUDIO_DRV,  /* I2S / PWM / HDMI               (live)        */
     CPC_SETTING_COUNT,      /* ---- visible settings end here ---- */
     CPC_SETTING_ROM,        /* Auto / <filename.rom>  — hidden for now      */
 } cpc_setting_id_t;
@@ -45,6 +57,7 @@ typedef struct {
     char    tape[128];   /* full path to tape image (.cdt/.cas) on boot   */
     uint8_t fast_tape;   /* 0=Off, 1=On — run unthrottled during tape load */
     uint8_t stereo;      /* 0=Mono, 1=ACB, 2=ABC stereo mode              */
+    uint8_t audio_driver; /* cpc_audio_driver_t: I2S / PWM / HDMI         */
 } cpc_settings_t;
 
 extern cpc_settings_t g_cpc_settings;

@@ -69,13 +69,14 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
         drivers/crash_handler.c
         drivers/audio.c
         drivers/audio_i2s_opt.S
+        drivers/pwm_audio/pwm_audio.c
         drivers/psram_init.c
         drivers/psram_allocator.c
         drivers/dlmalloc.c
         drivers/uart_logging.c
     )
 
-    target_include_directories(drivers PUBLIC drivers src)
+    target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
     target_compile_definitions(drivers PUBLIC
         BOARD_M2
         PLATFORM_M2=1
@@ -109,13 +110,14 @@ elseif(HDMI_DRIVER STREQUAL "VGA_HSTX")
         drivers/crash_handler.c
         drivers/audio.c
         drivers/audio_i2s_opt.S
+        drivers/pwm_audio/pwm_audio.c
         drivers/psram_init.c
         drivers/psram_allocator.c
         drivers/dlmalloc.c
         drivers/uart_logging.c
     )
 
-    target_include_directories(drivers PUBLIC drivers src)
+    target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
     target_compile_definitions(drivers PUBLIC
         BOARD_M2
         PLATFORM_M2=1
@@ -181,13 +183,14 @@ elseif(HDMI_DRIVER STREQUAL "COMPOSITE")
         drivers/crash_handler.c
         drivers/audio.c
         drivers/audio_i2s_opt.S
+        drivers/pwm_audio/pwm_audio.c
         drivers/psram_init.c
         drivers/psram_allocator.c
         drivers/dlmalloc.c
         drivers/uart_logging.c
     )
 
-    target_include_directories(drivers PUBLIC drivers src)
+    target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
     target_compile_definitions(drivers PUBLIC
         BOARD_M2
         PLATFORM_M2=1
@@ -223,6 +226,7 @@ else()
         drivers/crash_handler.c
         drivers/audio.c
         drivers/audio_i2s_opt.S
+        drivers/pwm_audio/pwm_audio.c
         drivers/psram_init.c
         drivers/psram_allocator.c
         drivers/dlmalloc.c
@@ -306,6 +310,7 @@ target_include_directories(frank-cpc PRIVATE
     src/Z80
     src/Pico
     drivers
+    drivers/pwm_audio
     drivers/fatfs
     drivers/sdcard
     drivers/ps2

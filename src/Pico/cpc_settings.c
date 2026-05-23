@@ -80,6 +80,11 @@ cpc_settings_t g_cpc_settings = {
     .monitor  = 0,  /* Color    */
     .customer = 0,  /* Amstrad  */
     .rom_idx  = 0,  /* Auto     */
+#if defined(HDMI_PIO_AUDIO)
+    .audio_driver = CPC_AUDIO_HDMI,
+#else
+    .audio_driver = CPC_AUDIO_I2S,
+#endif
 };
 
 bool g_cpc_settings_dirty = false;
@@ -91,6 +96,19 @@ static const char *MEMORY_LABELS[]   = { "64 KB", "128 KB", "576 KB" };
 static const char *MONITOR_LABELS[]  = { "Color", "Green" };
 static const char *FAST_TAPE_LABELS[] = { "Off", "On" };
 static const char *STEREO_LABELS[] = { "Mono", "ACB", "ABC" };
+
+static const char *AUDIO_DRV_LABELS[CPC_AUDIO_COUNT] = {
+    "I2S", "PWM", "HDMI",
+};
+
+/* Audio driver cycle per build configuration. */
+#if defined(HDMI_PIO_AUDIO)
+static const uint8_t AUDIO_DRV_CYCLE[] = { CPC_AUDIO_HDMI };
+#else
+static const uint8_t AUDIO_DRV_CYCLE[] = { CPC_AUDIO_I2S, CPC_AUDIO_PWM };
+#endif
+#define AUDIO_DRV_CYCLE_LEN ((int)(sizeof(AUDIO_DRV_CYCLE) / sizeof(AUDIO_DRV_CYCLE[0])))
+
 static const char *CUSTOMER_LABELS[] = {
     "Amstrad", "Schneider", "ISP", "Triumph",
     "Saisho",  "Solavox",   "AWA", "Orion",
@@ -119,6 +137,7 @@ int cpc_settings_choices(cpc_setting_id_t id) {
         case CPC_SETTING_AUDIO_IN: return 2;
         case CPC_SETTING_FAST_TAPE: return 2;
         case CPC_SETTING_STEREO:  return 3;
+        case CPC_SETTING_AUDIO_DRV: return AUDIO_DRV_CYCLE_LEN;
         case CPC_SETTING_ROM:      return g_cpc_rom_count > 0 ? g_cpc_rom_count : 1;
         default: return 0;
     }
@@ -133,6 +152,7 @@ const char *cpc_settings_label(cpc_setting_id_t id) {
         case CPC_SETTING_AUDIO_IN: return "Audio In";
         case CPC_SETTING_FAST_TAPE: return "Fast Tape";
         case CPC_SETTING_STEREO:  return "Audio Output";
+        case CPC_SETTING_AUDIO_DRV: return "Audio Driver";
         case CPC_SETTING_ROM:      return "ROM";
         default: return "?";
     }
@@ -147,6 +167,10 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
         case CPC_SETTING_AUDIO_IN: return tape_get_gpio_mode() ? "GPIO22" : "Off";
         case CPC_SETTING_FAST_TAPE: return FAST_TAPE_LABELS[g_cpc_settings.fast_tape & 1];
         case CPC_SETTING_STEREO:  return STEREO_LABELS[g_cpc_settings.stereo % 3];
+        case CPC_SETTING_AUDIO_DRV:
+            if (g_cpc_settings.audio_driver < CPC_AUDIO_COUNT)
+                return AUDIO_DRV_LABELS[g_cpc_settings.audio_driver];
+            return "?";
         case CPC_SETTING_ROM: {
             uint8_t idx = g_cpc_settings.rom_idx;
             if (idx >= (uint8_t)g_cpc_rom_count) idx = 0;
@@ -158,7 +182,8 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
 
 bool cpc_settings_needs_reset(cpc_setting_id_t id) {
     return id != CPC_SETTING_MONITOR && id != CPC_SETTING_AUDIO_IN
-        && id != CPC_SETTING_FAST_TAPE && id != CPC_SETTING_STEREO;
+        && id != CPC_SETTING_FAST_TAPE && id != CPC_SETTING_STEREO
+        && id != CPC_SETTING_AUDIO_DRV;
 }
 
 static void step_u8(uint8_t *v, int delta, int n) {
@@ -191,6 +216,14 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
             step_u8(&g_cpc_settings.stereo, delta, n);
             ay_stereo_mode = g_cpc_settings.stereo;
             break;
+        case CPC_SETTING_AUDIO_DRV: {
+            int idx = 0;
+            for (int i = 0; i < AUDIO_DRV_CYCLE_LEN; i++)
+                if (AUDIO_DRV_CYCLE[i] == g_cpc_settings.audio_driver) { idx = i; break; }
+            idx = (idx + AUDIO_DRV_CYCLE_LEN + delta) % AUDIO_DRV_CYCLE_LEN;
+            g_cpc_settings.audio_driver = AUDIO_DRV_CYCLE[idx];
+            break;
+        }
         case CPC_SETTING_ROM:      step_u8(&g_cpc_settings.rom_idx,  delta, n); break;
         default: break;
     }
@@ -257,6 +290,7 @@ static const ini_field_t INI_FIELDS[] = {
     { "customer", &g_cpc_settings.customer, 8 },
     { "fast_tape", &g_cpc_settings.fast_tape, 2 },
     { "stereo",    &g_cpc_settings.stereo,    3 },
+    { "audio_drv", &g_cpc_settings.audio_driver, CPC_AUDIO_COUNT },
 };
 #define INI_FIELD_COUNT ((int)(sizeof(INI_FIELDS)/sizeof(INI_FIELDS[0])))
 

@@ -42,6 +42,18 @@
 #include "audio.h"
 #endif
 
+#include "pwm_audio.h"
+#include "cpc_settings.h"
+
+/* Lazy-init PWM audio on first use. */
+static bool s_pwm_audio_inited = false;
+static void ensure_pwm_audio_initialized(void) {
+    if (s_pwm_audio_inited) return;
+    s_pwm_audio_inited = true;
+    pwm_audio_init(PWM_PIN0, PWM_PIN1, 44100);
+    pwm_audio_set_frame_rate(50);
+}
+
 #define FB_W CPC_FB_WIDTH
 #define FB_H CPC_FB_HEIGHT
 
@@ -171,6 +183,11 @@ static uint32_t __attribute__((aligned(32))) g_i2s_chunk[AUDIO_FRAMES_PER_CHUNK]
 static bool g_i2s_initialized = false;
 
 unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
+    if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
+        ensure_pwm_audio_initialized();
+        pwm_audio_push_samples(samples, (int)count);
+        return count;
+    }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
     uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
@@ -186,6 +203,15 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
 }
 
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
+    if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
+        ensure_pwm_audio_initialized();
+        int16_t mono[882];
+        unsigned n = count > 882 ? 882 : count;
+        for (unsigned i = 0; i < n; ++i)
+            mono[i] = (int16_t)(((int32_t)samples[i*2] + (int32_t)samples[i*2+1]) >> 1);
+        pwm_audio_push_samples(mono, (int)n);
+        return n;
+    }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
     uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
@@ -246,6 +272,11 @@ volatile uint32_t g_audio_prod = 0;
 volatile uint32_t g_audio_cons = 0;
 
 unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
+    if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
+        ensure_pwm_audio_initialized();
+        pwm_audio_push_samples(samples, (int)count);
+        return count;
+    }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
     uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
@@ -261,6 +292,15 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
 }
 
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
+    if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
+        ensure_pwm_audio_initialized();
+        int16_t mono[882];
+        unsigned n = count > 882 ? 882 : count;
+        for (unsigned i = 0; i < n; ++i)
+            mono[i] = (int16_t)(((int32_t)samples[i*2] + (int32_t)samples[i*2+1]) >> 1);
+        pwm_audio_push_samples(mono, (int)n);
+        return n;
+    }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
     uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
