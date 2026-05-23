@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdint.h>
 #include "ff.h"
-#include "cpc.h"
 #include "dialogs.h"
 
 char buf[255];

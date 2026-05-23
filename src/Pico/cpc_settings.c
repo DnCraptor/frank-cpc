@@ -8,26 +8,14 @@
 #include "cpc_settings.h"
 #include "tape.h"
 #include "ff.h"
-
-/* CPC subsystem headers needed for apply/reset */
-#include "mem.h"
-#include "io.h"
-#include "Z80.h"
+#include "cpc_adapter.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
-/* CPC globals set by cpc_settings_apply(). */
-extern int  CPCtype;
-extern int  CPCMaxMem;
-extern int  MonoScreen;
-extern int  ay_stereo_mode;
-extern Z80  cpu;
-extern void ResetFDC(void);
-extern void InitIO(void);
-extern void InitColors(void);
+static int MonoScreen = 0;
 
 /* ---- ROM list --------------------------------------------------------- */
 
@@ -112,18 +100,6 @@ static const uint8_t AUDIO_DRV_CYCLE[] = { CPC_AUDIO_I2S, CPC_AUDIO_PWM };
 static const char *CUSTOMER_LABELS[] = {
     "Amstrad", "Schneider", "ISP", "Triumph",
     "Saisho",  "Solavox",   "AWA", "Orion",
-};
-
-/* Raw Customer byte value for each index (PPI Port B bits [3:0]). */
-static const uint8_t CUSTOMER_VALUES[] = {
-    14,  /* Amstrad   */
-    15,  /* Schneider */
-    12,  /* ISP       */
-    13,  /* Triumph   */
-     0,  /* Saisho    */
-     2,  /* Solavox   */
-     4,  /* AWA       */
-     6,  /* Orion     */
 };
 
 /* ---- API ------------------------------------------------------------- */
@@ -214,7 +190,6 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
             break;
         case CPC_SETTING_STEREO:
             step_u8(&g_cpc_settings.stereo, delta, n);
-            ay_stereo_mode = g_cpc_settings.stereo;
             break;
         case CPC_SETTING_AUDIO_DRV: {
             int idx = 0;
@@ -238,24 +213,21 @@ void cpc_settings_apply(void) {
     static const int MEM_MAP[] = { 64, 128, 576 };
 
     /* Model */
-    CPCtype = (int)g_cpc_settings.model;
+    cpc_set_model((int)g_cpc_settings.model);
 
     /* Memory */
     int idx = g_cpc_settings.memory;
     if (idx > 2) idx = 2;
-    CPCMaxMem = MEM_MAP[idx];
+    cpc_set_ram_size(MEM_MAP[idx]);
 
     /* Monitor */
     cpc_settings_apply_visual();
 
-    /* Customer — raw PPI Port B value */
-    Customer = (char)CUSTOMER_VALUES[g_cpc_settings.customer & 7];
+    /* Customer — set via CPC jumpers (PPI Port B) */
+    /* Customer value is now handled by the adapter's CPC.jumpers */
 
-    /* AY stereo mode */
-    ay_stereo_mode = g_cpc_settings.stereo;
-
-    /* ROM override — forced Auto until ROM selection is re-enabled */
-    g_basic_rom_override[0] = '\0';
+    /* AY stereo mode — TODO: expose via adapter */
+    /* ay_stereo_mode = g_cpc_settings.stereo; */
 }
 
 /* Full CPC reset applying all settings.  Called from cpc_ui when the
@@ -263,14 +235,10 @@ void cpc_settings_apply(void) {
 void cpc_settings_do_reset(void) {
     g_cpc_settings_dirty = false;
     cpc_settings_apply();
-    printf("settings: reset CPCtype=%d CPCMaxMem=%d MonoScreen=%d Customer=%d rom=%s\n",
-           CPCtype, CPCMaxMem, MonoScreen, (int)(unsigned char)Customer,
-           g_basic_rom_override[0] ? g_basic_rom_override : "(auto)");
-    InitIO();
-    InitColors();
-    InitMem();
-    ResetFDC();
-    ResetZ80(&cpu);
+    printf("settings: reset model=%d ram=%d\n",
+           (int)g_cpc_settings.model,
+           (int)g_cpc_settings.memory);
+    cpc_engine_reset();
 }
 
 /* ---- INI persistence ------------------------------------------------- */

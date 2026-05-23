@@ -319,24 +319,20 @@ endif()
 set_source_files_properties(drivers/dlmalloc.c PROPERTIES COMPILE_DEFINITIONS
     "ONLY_MSPACES=1;HAVE_MMAP=0;HAVE_MORECORE=0;NO_MALLOC_STATS=1;USE_LOCKS=0;ABORT_ON_ASSERT_FAILURE=0;MALLOC_FAILURE_ACTION=;LACKS_SYS_MMAN_H=1;LACKS_UNISTD_H=1;LACKS_SYS_PARAM_H=1")
 
-set(CPC_CORE
-    src/Z80/Z80.c
-    src/Z80/z80_arm.S
-    src/screenpos.c
-    src/disc.c
-    src/io.c
-    src/mem.c
-    src/tape.c
+set(CAP32_ENGINE
+    src/cap32/z80.cpp
+    src/cap32/cap32.cpp
+    src/cap32/crtc.cpp
+    src/cap32/psg.cpp
+    src/cap32/fdc.cpp
+    src/cap32/disk.cpp
+    src/cap32/tape.cpp
+    src/cpc_adapter.cpp
 )
 
-set(CPC_ADAPTED
-    src/cpc.c
-    src/screen.c
-    src/colors.c
-    src/keyboard.c
-    src/aysound.c
-    src/snapshot.c
+set(CPC_PLATFORM
     src/tape_rec.c
+    src/tape_gpio.c
 )
 
 set(PICO_PORT
@@ -352,20 +348,20 @@ set(PICO_PORT
 )
 
 set(CPC_STUBS
-    src/dialogs.c
     src/printer.c
+    src/dialogs.c
 )
 
 add_executable(frank-cpc
-    ${CPC_CORE}
-    ${CPC_ADAPTED}
+    ${CAP32_ENGINE}
+    ${CPC_PLATFORM}
     ${PICO_PORT}
     ${CPC_STUBS}
 )
 
 target_include_directories(frank-cpc PRIVATE
     src
-    src/Z80
+    src/cap32
     src/Pico
     drivers
     drivers/pwm_audio
@@ -420,6 +416,16 @@ target_compile_options(frank-cpc PRIVATE
     -Wno-implicit-fallthrough
     -Wno-pointer-sign
     -Wno-incompatible-pointer-types
+)
+
+# Hot engine files get -O3 for maximum performance
+set_source_files_properties(
+    src/cap32/z80.cpp
+    src/cap32/crtc.cpp
+    src/cap32/psg.cpp
+    src/cap32/cap32.cpp
+    src/cpc_adapter.cpp
+    PROPERTIES COMPILE_FLAGS "-O3"
 )
 
 target_link_libraries(frank-cpc

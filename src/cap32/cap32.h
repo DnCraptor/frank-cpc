@@ -1,0 +1,340 @@
+/* Caprice32 - Amstrad CPC Emulator
+   (c) Copyright 1997-2005 Ulrich Doewich
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
+
+#ifndef CAP32_H
+#define CAP32_H
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "types.h"
+
+#define VERSION_STRING "v4.6.0"
+
+#ifndef _MAX_PATH
+#define _MAX_PATH 256
+#endif
+
+#define CPC_BASE_FREQUENCY_MHZ  4.0
+#define FRAME_PERIOD_MS        20.0
+#define CYCLE_COUNT_INIT (CPC_BASE_FREQUENCY_MHZ*FRAME_PERIOD_MS*1000)
+
+#define CPC_SCR_WIDTH 1024
+#define CPC_SCR_HEIGHT 312
+#define CPC_VISIBLE_SCR_WIDTH 384
+#define CPC_VISIBLE_SCR_HEIGHT 270
+
+#define MIN_SPEED_SETTING 1
+#define MAX_SPEED_SETTING 32
+#define DEF_SPEED_SETTING 4
+
+#define ICN_DISK_WIDTH 14
+#define ICN_DISK_HEIGHT 16
+#define ICN_TAPE_WIDTH 18
+#define ICN_TAPE_HEIGHT 13
+
+#define VOC_THRESHOLD 128
+
+#define VS_flag      1
+#define HS_flag      2
+#define HDT_flag     4
+#define VDT_flag     8
+#define HT_flag      16
+#define VT_flag      32
+#define MR_flag      64
+#define VTadj_flag   128
+#define VSf_flag     256
+
+#define MF2_ACTIVE      1
+#define MF2_RUNNING     2
+#define MF2_INVISIBLE   4
+
+#define EC_BREAKPOINT      10
+#define EC_TRACE           20
+#define EC_FRAME_COMPLETE  30
+#define EC_CYCLE_COUNT     40
+#define EC_SOUND_BUFFER    50
+
+#ifdef _WIN32
+#define ATTR_PACKED __attribute__((packed, gcc_struct))
+#else
+#define ATTR_PACKED __attribute__((packed))
+#endif
+
+typedef struct {
+   char id[8];
+   char unused1[8];
+   unsigned char version;
+   unsigned char AF[2];
+   unsigned char BC[2];
+   unsigned char DE[2];
+   unsigned char HL[2];
+   unsigned char R;
+   unsigned char I;
+   unsigned char IFF0;
+   unsigned char IFF1;
+   unsigned char IX[2];
+   unsigned char IY[2];
+   unsigned char SP[2];
+   unsigned char PC[2];
+   unsigned char IM;
+   unsigned char AFx[2];
+   unsigned char BCx[2];
+   unsigned char DEx[2];
+   unsigned char HLx[2];
+   unsigned char ga_pen;
+   unsigned char ga_ink_values[17];
+   unsigned char ga_ROM_config;
+   unsigned char ga_RAM_config;
+   unsigned char crtc_reg_select;
+   unsigned char crtc_registers[18];
+   unsigned char upper_ROM;
+   unsigned char ppi_A;
+   unsigned char ppi_B;
+   unsigned char ppi_C;
+   unsigned char ppi_control;
+   unsigned char psg_reg_select;
+   unsigned char psg_registers[16];
+   unsigned char ram_size[2];
+   unsigned char cpc_model;
+   unsigned char last_interrupt;
+   unsigned char scr_modes[6];
+   unsigned char drvA_DOSfilename[13];
+   unsigned char drvB_DOSfilename[13];
+   unsigned char cart_DOSfilename[13];
+   unsigned char fdc_motor;
+   unsigned char drvA_current_track;
+   unsigned char drvB_current_track;
+   unsigned char drvC_current_track;
+   unsigned char drvD_current_track;
+   unsigned char printer_data;
+   unsigned char psg_env_step;
+   unsigned char psg_env_direction;
+   unsigned char crtc_type;
+   unsigned char crtc_addr[2];
+   unsigned char crtc_scanline[2];
+   unsigned char crtc_char_count[2];
+   unsigned char crtc_line_count;
+   unsigned char crtc_raster_count;
+   unsigned char crtc_vt_adjust_count;
+   unsigned char crtc_hsw_count;
+   unsigned char crtc_vsw_count;
+   unsigned char crtc_flags[2];
+   unsigned char ga_int_delay;
+   unsigned char ga_sl_count;
+   unsigned char z80_int_pending;
+   unsigned char unused2[75];
+} t_SNA_header;
+
+enum DRIVE_ID {
+   DSK_A = 0,
+   DSK_B,
+   TAPE_DRIVE,
+   CARTRIDGE,
+   SNAP_DRIVE,
+};
+typedef enum DRIVE_ID DRIVE;
+
+typedef struct t_CPC {
+   unsigned int model;
+   unsigned int jumpers;
+   unsigned int ram_size;
+   unsigned int speed;
+   unsigned int limit_speed;
+   bool paused;
+   unsigned int keyboard_line;
+   unsigned int tape_motor;
+   unsigned int tape_play_button;
+   unsigned int printer;
+   unsigned int printer_port;
+   unsigned int mf2;
+   unsigned int keyboard;
+   int cycle_count;
+
+   unsigned int scr_bpp; /* set to 8 */
+   unsigned int scr_bps;
+   unsigned int scr_line_offs;
+   unsigned char *scr_base;
+   unsigned char *scr_pos;
+   void (*scr_render)();
+   void (*scr_prerendernorm)();
+   void (*scr_prerenderbord)();
+   void (*scr_prerendersync)();
+   void (*scr_line_complete)(int line); /* called at HSYNC with completed scanline */
+   dword dwYScale;
+
+   unsigned int snd_enabled;
+   unsigned int snd_playback_rate;
+   unsigned int snd_bits;
+   unsigned int snd_stereo;
+   unsigned int snd_volume;
+   unsigned int snd_pp_device;
+   unsigned int snd_buffersize;
+   bool snd_ready;
+   unsigned char *snd_bufferptr;
+   union {
+      struct {
+         unsigned int low;
+         unsigned int high;
+      };
+      int64_t both;
+   } snd_cycle_count_init;
+
+   unsigned int max_tracksize;
+   char rom_path[256];
+   char rom_file[16][256];
+} t_CPC;
+
+typedef struct {
+   unsigned int requested_addr;
+   unsigned int next_addr;
+   unsigned int addr;
+   unsigned int next_address;
+   unsigned int scr_base;
+   unsigned int char_count;
+   unsigned int line_count;
+   unsigned int raster_count;
+   unsigned int hsw;
+   unsigned int hsw_count;
+   unsigned int vsw;
+   unsigned int vsw_count;
+   unsigned int flag_hadhsync;
+   unsigned int flag_inmonhsync;
+   unsigned int flag_invsync;
+   unsigned int flag_invta;
+   unsigned int flag_newscan;
+   unsigned int flag_reschar;
+   unsigned int flag_resframe;
+   unsigned int flag_resnext;
+   unsigned int flag_resscan;
+   unsigned int flag_resvsync;
+   unsigned int flag_startvta;
+   unsigned int last_hend;
+   unsigned int reg5;
+   unsigned int r7match;
+   unsigned int r9match;
+   unsigned int hstart;
+   unsigned int hend;
+   void (*CharInstMR)();
+   void (*CharInstSL)();
+   unsigned char reg_select;
+   unsigned char registers[18];
+   unsigned int split_addr;
+   unsigned char split_sl;
+   unsigned int sl_count;
+   unsigned char interrupt_sl;
+} t_CRTC;
+
+typedef struct {
+   int timeout;
+   int motor;
+   int led;
+   int flags;
+   int phase;
+   int byte_count;
+   int buffer_count;
+   int cmd_length;
+   int res_length;
+   int cmd_direction;
+   void (*cmd_handler)();
+   unsigned char *buffer_ptr;
+   unsigned char *buffer_endptr;
+   unsigned char command[12];
+   unsigned char result[8];
+} t_FDC;
+
+typedef struct {
+   unsigned int hs_count;
+   unsigned char ROM_config;
+   unsigned char lower_ROM_bank;
+   bool registerPageOn;
+   unsigned char RAM_bank;
+   unsigned char RAM_config;
+   unsigned char upper_ROM;
+   unsigned int requested_scr_mode;
+   unsigned int scr_mode;
+   unsigned char pen;
+   unsigned char ink_values[17];
+   unsigned int palette[34];
+   unsigned char sl_count;
+   unsigned char int_delay;
+} t_GateArray;
+
+typedef struct {
+   unsigned char control;
+   unsigned char portA;
+   unsigned char portB;
+   unsigned char portC;
+} t_PPI;
+
+typedef struct {
+   union {
+      struct {
+         unsigned int low;
+         unsigned int high;
+      };
+      int64_t both;
+   } cycle_count;
+   unsigned int buffer_full;
+   unsigned char control;
+   unsigned char reg_select;
+   union {
+      unsigned char Index[16];
+      struct {
+         unsigned char TonALo, TonAHi;
+         unsigned char TonBLo, TonBHi;
+         unsigned char TonCLo, TonCHi;
+         unsigned char Noise;
+         unsigned char Mixer;
+         unsigned char AmplitudeA, AmplitudeB, AmplitudeC;
+         unsigned char EnvelopeLo, EnvelopeHi;
+         unsigned char EnvType;
+         unsigned char PortA;
+         unsigned char PortB;
+      };
+      struct {
+         unsigned short TonA;
+         unsigned short TonB;
+         unsigned short TonC;
+         unsigned char _noise, _mixer, _ampa, _ampb, _ampc;
+         unsigned short Envelope;
+         unsigned char _envtype, _porta, portb;
+      } ATTR_PACKED;
+   } RegisterAY;
+   int AmplitudeEnv;
+   bool FirstPeriod;
+   void (*Synthesizer)();
+} t_PSG;
+
+typedef struct {
+   int scrln;
+   int scanline;
+   unsigned int flag_drawing;
+   unsigned int frame_completed;
+} t_VDU;
+
+typedef byte* t_MemBankConfig[8][4];
+
+void ga_init_banking(t_MemBankConfig& membank_config, unsigned char RAM_bank);
+void emulator_reset();
+int emulator_init();
+int video_set_palette();
+void update_cpc_speed();
+
+#endif

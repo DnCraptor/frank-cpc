@@ -6,7 +6,7 @@
  */
 
 #include "cpc_tape_loader.h"
-#include "tape.h"
+#include "cpc_adapter.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -14,7 +14,7 @@
 static char g_tape_path[CPC_TAPE_PATH_LEN] = "";
 
 int cpc_mount_tape(const char *path) {
-    if (tape_open(path) != 0) {
+    if (cpc_tape_insert(path) != 0) {
         g_tape_path[0] = '\0';
         return -1;
     }
@@ -24,7 +24,7 @@ int cpc_mount_tape(const char *path) {
 }
 
 void cpc_eject_tape(void) {
-    tape_close();
+    cpc_tape_eject();
     g_tape_path[0] = '\0';
     printf("cpc_tape: ejected\n");
 }

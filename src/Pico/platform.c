@@ -16,15 +16,7 @@
 #include "HDMI.h"
 #include "cpc_compat.h"
 #include "ps2kbd_wrapper.h"
-#include "cpc.h"
-#include "mem.h"
-#include "screen.h"
-#include "colors.h"
-#include "keyboard.h"
-#include "disc.h"
-#include "printer.h"
-#include "aysound.h"
-#include "io.h"
+#include "cpc_adapter.h"
 #include "cpc_settings.h"
 #include "cpc_ui.h"
 #include "cpc_loader.h"
@@ -32,6 +24,7 @@
 #include "cpc_tape_loader.h"
 #include "tape.h"
 #include "nespad.h"
+#include "crash_handler.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -40,48 +33,12 @@
 extern uint8_t *SCREEN[2];
 extern volatile uint32_t current_buffer;
 extern uint8_t cpc_fb[CPC_FB_HEIGHT][CPC_FB_WIDTH];
-extern int CPUZyklenBisInt;
-extern int IRQCount;
-extern int RunZ80_cpc(void);
-
-Display *mydisplay = NULL;
-Drawable mywindow = NULL;
-XWindowAttributes mywindowattributes = {0};
-GC mygc = NULL;
-int myscreen = 0;
-XEvent myevent = {0};
-unsigned int depth = 8;
-int format = 0;
-unsigned int width = 640, height = 400;
-int bitmap_pad = 8;
-static XImage g_dummy_image = {640, 400};
-XImage *myimage = &g_dummy_image;
-
-/* CPC hardware colors come from ColorRGBs/GreenRGBs in colors.c (6-bit, 0-63).
- * Scale linearly to 8-bit to match Caprice32/WinAPE PC emulator reference output.
- * The CPC uses 3 DAC levels per channel: 0x00, 0x20 (medium ~50%), 0x3f (full). */
-extern long ColorRGBs[32][3];
-extern long GreenRGBs[32][3];
-
-/* Linear 6-bit → 8-bit: maps CPC 3-level (0/32/63) to (0/129/255).
- * Matches PC emulator output (Caprice32/WinAPE reference). */
-static inline uint8_t scale6to8(long v) { return (uint8_t)(v * 255L / 63L); }
 
 void cpc_init_palette(void) {
-    for (int i = 0; i < 32; ++i) {
-        uint32_t c = ((uint32_t)scale6to8(ColorRGBs[i][0]) << 16)
-                   | ((uint32_t)scale6to8(ColorRGBs[i][1]) << 8)
-                   |  (uint32_t)scale6to8(ColorRGBs[i][2]);
-        graphics_set_palette((uint8_t)i, c);
-    }
-    /* Green palette at indices 32-63 */
-    for (int i = 0; i < 32; ++i) {
-        uint32_t c = ((uint32_t)scale6to8(GreenRGBs[i][0]) << 16)
-                   | ((uint32_t)scale6to8(GreenRGBs[i][1]) << 8)
-                   |  (uint32_t)scale6to8(GreenRGBs[i][2]);
-        graphics_set_palette((uint8_t)(i + 32), c);
-    }
-    /* Border default = CPC hardware color 20 (black) */
+    uint32_t rgb[32];
+    cpc_get_palette_rgb(rgb);
+    for (int i = 0; i < 32; i++)
+        graphics_set_palette((uint8_t)i, rgb[i]);
     graphics_set_bgcolor(0x000000);
 }
 
@@ -112,86 +69,29 @@ void cpc_frame_present(void) {
     }
 #endif
 
-    /* AktInk[16] = CPC border ink index — use it for top/bottom padding so
-     * the area surrounding the active image shows the correct CPC border
-     * colour rather than grey (palette index 0).
-     * When border effects are active, AktInk[16] may be overwritten by
-     * the effect (e.g. to black).  Use the frame-start value instead. */
-    extern byte AktInk[];
-    uint8_t border = (uint8_t)AktInk[16];
-    if (pico_has_ink_events() && pico_get_ink_event_count() > 10)
-        border = pico_get_frame_start_border();
+    uint8_t border = cpc_get_border_ink();
 
-    /* Update hardware background color for left/right borders */
     {
         static uint8_t last_border = 0xFF;
         if (border != last_border) {
             last_border = border;
-            uint32_t c = ((uint32_t)scale6to8(ColorRGBs[border][0]) << 16)
-                       | ((uint32_t)scale6to8(ColorRGBs[border][1]) << 8)
-                       |  (uint32_t)scale6to8(ColorRGBs[border][2]);
-            graphics_set_bgcolor(c);
+            uint32_t rgb[32];
+            cpc_get_palette_rgb(rgb);
+            graphics_set_bgcolor(rgb[border]);
         }
     }
 
-    /* Centre 200 active rows in 240 screen rows: 20 rows top + 200 + 20 bottom */
-    const int top_pad = (CPC_SCREEN_LINES - CPC_FB_HEIGHT) / 2; /* = 20 */
-
+    const int top_pad = (CPC_SCREEN_LINES - CPC_FB_HEIGHT) / 2;
     uint8_t *dst = SCREEN[current_buffer];
 
-    /* Top padding: use border effect rows or per-row border colors */
-    if (pico_has_ink_events()) {
-        /* Pre-render border effect rows (grouped by CALL, not by scanline) */
-        pico_prepare_border_effect();
-        int n_eff = pico_border_effect_rows();
-        if (n_eff > 0) {
-            /* Centre the border effect rows vertically in the top padding */
-            int start_row = (top_pad - n_eff) / 2;
-            if (start_row < 0) start_row = 0;
-            const uint8_t *btop = pico_get_border_top();
-            for (int r = 0; r < top_pad; r++) {
-                int eff_idx = r - start_row;
-                const uint8_t *eff = (eff_idx >= 0 && eff_idx < n_eff)
-                    ? pico_get_border_effect_row(eff_idx) : NULL;
-                if (eff)
-                    memcpy(dst + CPC_FB_WIDTH * r, eff, CPC_FB_WIDTH);
-                else
-                    memset(dst + CPC_FB_WIDTH * r, btop[r], CPC_FB_WIDTH);
-            }
-        } else {
-            const uint8_t *btop = pico_get_border_top();
-            for (int r = 0; r < top_pad; r++)
-                memset(dst + CPC_FB_WIDTH * r, btop[r], CPC_FB_WIDTH);
-        }
-    } else {
-        memset(dst, border, (size_t)(CPC_FB_WIDTH * top_pad));
-    }
-
+    memset(dst, border, (size_t)(CPC_FB_WIDTH * top_pad));
     memcpy(dst + CPC_FB_WIDTH * top_pad, cpc_fb, CPC_FB_WIDTH * CPC_FB_HEIGHT);
+    memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
+           (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
 
-    /* No longer need per-scanline border rendering in active area —
-     * border effect is rendered in top padding via call-grouped rows. */
-
-    /* Bottom padding: use per-row border colors for border effects */
-    if (pico_has_ink_events()) {
-        const uint8_t *bbot = pico_get_border_bot();
-        int bot_start = top_pad + CPC_FB_HEIGHT;
-        int bot_rows = CPC_SCREEN_LINES - bot_start;
-        for (int r = 0; r < bot_rows; r++)
-            memset(dst + CPC_FB_WIDTH * (bot_start + r),
-                   r < 20 ? bbot[r] : border, CPC_FB_WIDTH);
-    } else {
-        memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
-               (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
-    }
-
-    /* Render settings overlay on top if visible */
     if (cpc_ui_is_visible())
         cpc_ui_render(dst, CPC_FB_WIDTH, CPC_SCREEN_LINES);
 
-    /* Point VGA output at the just-completed buffer so the display
-     * always shows a fully rendered frame (HDMI already reads from
-     * SCREEN[!current_buffer] after the flip below). */
     graphics_set_buffer(dst);
     current_buffer ^= 1u;
 }
@@ -199,14 +99,13 @@ void cpc_frame_present(void) {
 static uint64_t g_next_frame_us = 0;
 #define FRAME_PERIOD_US 20000
 
-uint32_t g_frame_skips = 0;  /* overrun count, read by cpc.c heartbeat */
-
 void cpc_frame_sync(void) {
+    static uint32_t frame_skips = 0;
+
     if (g_next_frame_us == 0)
         g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
 
-    /* Fast tape: skip the timing wait while tape is loading */
-    if (g_cpc_settings.fast_tape && tape_is_loaded() && tape_get_motor()) {
+    if (g_cpc_settings.fast_tape && cpc_tape_is_loaded() && cpc_tape_get_motor()) {
         g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
         return;
     }
@@ -216,10 +115,10 @@ void cpc_frame_sync(void) {
         while (time_us_64() < g_next_frame_us) tight_loop_contents();
         g_next_frame_us += FRAME_PERIOD_US;
     } else if (now - g_next_frame_us > 2 * FRAME_PERIOD_US) {
-        g_frame_skips++;
+        frame_skips++;
         g_next_frame_us = now + FRAME_PERIOD_US;
     } else {
-        g_frame_skips++;
+        frame_skips++;
         g_next_frame_us += FRAME_PERIOD_US;
     }
 }
@@ -482,8 +381,7 @@ void cpc_ps2_feed_events(void) {
     static bool alt_held = false;
     int pressed;
     unsigned char key;
-
-    /* Autotype only runs once per frame — called separately from LoopZ80. */
+    uint8_t *km = cpc_get_keyboard_matrix();
 
     ps2kbd_tick();
     while (ps2kbd_get_key(&pressed, &key)) {
@@ -534,17 +432,15 @@ void cpc_ps2_feed_events(void) {
 
         /* Direct CPC keyboard matrix manipulation.
          * Each PS/2 scancode maps to a fixed (row, bit) in the CPC's
-         * 10×8 Keyport matrix.  Press clears the bit, release sets it.
-         * This bypasses the stateful CPCKeyPress/Release functions,
-         * eliminating sticky-key bugs caused by shift-state coupling. */
+         * 10×8 keyboard matrix. Press clears the bit, release sets it. */
         if (key < CPC_MATRIX_SIZE) {
             uint8_t row = ps2_to_cpc_matrix[key][0];
             uint8_t bit = ps2_to_cpc_matrix[key][1];
             if (row < 10) {
                 if (pressed)
-                    Keyport[row] &= ~(1u << bit);
+                    km[row] &= ~(1u << bit);
                 else
-                    Keyport[row] |= (1u << bit);
+                    km[row] |= (1u << bit);
             }
         }
     }
@@ -573,6 +469,8 @@ void cpc_nespad_init(void) {
 void cpc_nespad_poll(void) {
     if (!g_nespad_initialized) return;
 
+    uint8_t *km = cpc_get_keyboard_matrix();
+
     nespad_read();
 
     uint32_t s = nespad_state;
@@ -589,71 +487,38 @@ void cpc_nespad_poll(void) {
 
     /* Merge with keyboard: keep keyboard bits that are already pressed
      * (cleared), OR in gamepad bits (also active-low). */
-    Keyport[9] &= joy;
+    km[9] &= joy;
 
     /* Release gamepad-only bits: bits where joy=1 (released on pad)
      * AND no keyboard key is holding them down.
      * We only manage bits 0-5 (joystick); bits 6-7 are DEL and backspace. */
     static uint8_t prev_joy = 0xFF;
     uint8_t released = joy & ~prev_joy & 0x3F;  /* bits that went from 0→1 */
-    Keyport[9] |= released;
+    km[9] |= released;
     prev_joy = joy;
 }
 
 void cpc_pico_main(void) {
-    /* CPC Gate Array fires IRQ every 52 HSYNCs.
-     * 1 HSYNC = R0+1 characters = 64 characters × 4 T-states = 256 T-states.
-     * Period = 52 × 256 = 13312 T-states. */
-    CPUZyklenBisInt = 13312;
-    IRQCount = 0;
-    ExitCPC = 0;
-    NoDebug = 1;
-    DebugFP = NULL;
-    WorkDirectory[0] = '\0';
-    RCfilename[0] = '\0';
-    PrinterCmdLine[0] = '\0';
-    memset(AYRegister, 0, sizeof(AYRegister));
-
-    snprintf(Language, sizeof(Language), "eng");
-    for (int i = 1; i <= 14; ++i) snprintf(ROMFile[i], 80, "\n");
-    snprintf(ROMFile[7], 80, "amsdos.rom\n");
-    snprintf(DiscDir[0], 80, "disc\n");
-    snprintf(DiscDir[1], 80, "disc\n");
-
-    /* Load saved settings; apply to CPCtype/CPCMaxMem/MonoScreen/Customer */
     cpc_settings_load();
     cpc_settings_apply();
 
-    InitIO();
-    InitColors();
-    cpc_ui_init();      /* install UI palette entries (uses HDMI palette) */
-    if (!InitMem()) {
-        printf("Failed to initialize CPC memory/ROMs\n");
+    if (cpc_engine_init() != 0) {
+        printf("Failed to initialize CPC engine\n");
         while (true) tight_loop_contents();
     }
-    InitScreen();
-    InitKeyboard();
-    InitDisc();
-    tape_init();                /* initialise tape engine + GPIO22 pin */
-    cpc_disk_autoload();    /* load drivea.dsk / driveb.dsk if present */
 
-    /* Auto-mount tape if configured via tape= in /cpc/cpc.ini */
+    cpc_ui_init();
+    cpc_nespad_init();
+    tape_init();
+
+    cpc_disk_autoload();
+
     if (g_cpc_settings.tape[0]) {
-        if (cpc_mount_tape(g_cpc_settings.tape) == 0)
+        if (cpc_tape_insert(g_cpc_settings.tape) == 0)
             printf("tape: auto-mounted %s\n", g_cpc_settings.tape);
         else
             printf("tape: failed to mount %s\n", g_cpc_settings.tape);
     }
-    InitPrinter();
-    init_dsp();
-    ResetFDC();
-    cpc_nespad_init();
-
-    ResetZ80(&cpu);
-    cpu.TrapBadOps = 1;
-    cpu.Trace = 0;
-
-    printf("CPC initialized. Starting emulation...\n");
 
     /* Arm auto-type if configured via autorun= in /cpc/cpc.ini.
      * \n in the string = 10-second pause (wait for disk load / title screen).
@@ -708,7 +573,28 @@ void cpc_pico_main(void) {
         }
     }
 
-    RunZ80_cpc();
+    printf("CPC initialized. Starting emulation...\n");
 
-    while (true) tight_loop_contents();
+    uint32_t frame_count = 0;
+    absolute_time_t fps_timer = get_absolute_time();
+
+    while (1) {
+        crash_handler_feed();
+        cpc_ps2_feed_events();
+        cpc_nespad_poll();
+        cpc_autotype_tick();
+        cpc_engine_run_frame();
+        cpc_frame_present();
+        cpc_frame_sync();
+
+        frame_count++;
+        absolute_time_t now = get_absolute_time();
+        int64_t elapsed_us = absolute_time_diff_us(fps_timer, now);
+        if (elapsed_us >= 2000000) { /* every 2 seconds */
+            uint32_t fps_x10 = (uint32_t)(frame_count * 10000000ULL / elapsed_us);
+            printf("heartbeat: %u.%u fps\n", fps_x10 / 10, fps_x10 % 10);
+            frame_count = 0;
+            fps_timer = now;
+        }
+    }
 }

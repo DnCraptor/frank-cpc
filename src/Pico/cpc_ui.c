@@ -12,15 +12,15 @@
 #include "cpc_settings.h"
 #include "cpc_loader.h"
 #include "cpc_tape_loader.h"
-#include "tape.h"
-#include "snapshot.h"
-#include "disc.h"
+#include "cpc_adapter.h"
 #include "tape_rec.h"
 #include "ui_draw.h"
 #include "board_config.h"
 
 #include <string.h>
 #include <stdio.h>
+
+int CreateBlankDsk(const char *path);
 
 /* KS_* virtual key constants (must match platform.c) */
 #define KS_Escape    0xFF1B
@@ -179,10 +179,10 @@ static bool handle_settings_page(unsigned int ks) {
 
         case KS_Return:
             if (s_setting_row == SETTINGS_SAVE_SNA_ROW) {
-                snapshot_save("/cpc/snapshot.sna");
+                cpc_snapshot_save("/cpc/snapshot.sna");
                 s_state = UI_HIDDEN;
             } else if (s_setting_row == SETTINGS_LOAD_SNA_ROW) {
-                snapshot_load("/cpc/snapshot.sna");
+                cpc_snapshot_load("/cpc/snapshot.sna");
                 s_state = UI_HIDDEN;
             } else if (s_setting_row == SETTINGS_TAPE_REC_ROW) {
                 if (tape_rec_active()) {

@@ -8,8 +8,7 @@
 #include "cpc_loader.h"
 #include "cpc_settings.h"
 #include "cpc_tape_loader.h"
-#include "dialogs.h"
-#include "disc.h"
+#include "cpc_adapter.h"
 #include "ff.h"
 #include "psram_allocator.h"
 
@@ -17,8 +16,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-
-extern void InsertDisk(int DrvNum);
 
 /* ---- entry table ---------------------------------------------------- */
 
@@ -158,10 +155,7 @@ void cpc_disk_entry_path(int idx, char *buf, size_t sz) {
 
 int cpc_mount_disk(int drv, const char *path) {
     if (drv < 0 || drv > 1) return -1;
-    SetPendingDiskPath(path);
-    InsertDisk(drv);
-    /* Check it actually loaded (fid will be -1 if it failed) */
-    if (dsk[drv].fid < 0 && dsk[drv].ImageName[0] == '\0') {
+    if (cpc_disk_insert(drv, path) != 0) {
         g_mounted_path[drv][0] = '\0';
         return -1;
     }
@@ -172,8 +166,7 @@ int cpc_mount_disk(int drv, const char *path) {
 
 void cpc_eject_disk(int drv) {
     if (drv < 0 || drv > 1) return;
-    dsk[drv].fid = -1;
-    dsk[drv].ImageName[0] = '\0';
+    cpc_disk_eject(drv);
     g_mounted_path[drv][0] = '\0';
     printf("cpc_loader: drive %c ejected\n", 'A' + drv);
 }
