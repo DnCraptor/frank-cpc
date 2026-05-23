@@ -30,7 +30,7 @@ char RCfilename[255];
 char PrinterCmdLine[255];
 int CPCMaxMem;
 int CPCtype;
-char ROMFile[8][80];
+char ROMFile[16][80];
 char DiscDir[2][80];
 char Language[10];
 int tmp1, tmp2, tmp3;
@@ -46,7 +46,7 @@ void InitCPC(int Start) {
   (void)Start;
   CPCMaxMem = 128;
   CPCtype = 2;
-  for (int i = 1; i <= 6; ++i) sprintf(ROMFile[i], "\n");
+  for (int i = 1; i <= 14; ++i) sprintf(ROMFile[i], "\n");
   sprintf(ROMFile[7], "amsdos.rom\n");
   sprintf(DiscDir[0], "disc\n");
   sprintf(DiscDir[1], "disc\n");
@@ -273,7 +273,7 @@ char              PrinterCmdLine[255];
 
 int               CPCMaxMem;
 int               CPCtype;
-char              ROMFile[8][80];
+char              ROMFile[16][80];
 char              DiscDir [2][80];
 char              Language [10];
 int               tmp1, tmp2, tmp3;
@@ -417,7 +417,7 @@ void InitCPC (int Start) {
   if (fp==NULL || (CPCMaxMem!=64 && CPCMaxMem!=128 && CPCMaxMem!=576)) {
     CPCMaxMem=128;
     CPCtype = 2;
-    for (i=1; i<=6; i++) sprintf (ROMFile[i], "\n");
+    for (i=1; i<=14; i++) sprintf (ROMFile[i], "\n");
     sprintf (ROMFile[7], "amsdos.rom\n");
     sprintf (DiscDir[0], "disc\n");
     sprintf (DiscDir[1], "disc\n");
@@ -721,7 +721,7 @@ main (argc,argv) int argc;char **argv; {
 
     CPUZyklenBisInt = 13333;
     RAM = NULL;
-    for (i=0;i<=7; i++)
+    for (i=0;i<=15; i++)
       UpperROM[i]=NULL;
     
     if (InitMem()) {

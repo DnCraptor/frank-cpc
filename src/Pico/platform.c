@@ -603,7 +603,7 @@ void cpc_pico_main(void) {
     memset(AYRegister, 0, sizeof(AYRegister));
 
     snprintf(Language, sizeof(Language), "eng");
-    for (int i = 1; i <= 6; ++i) snprintf(ROMFile[i], 80, "\n");
+    for (int i = 1; i <= 14; ++i) snprintf(ROMFile[i], 80, "\n");
     snprintf(ROMFile[7], 80, "amsdos.rom\n");
     snprintf(DiscDir[0], 80, "disc\n");
     snprintf(DiscDir[1], 80, "disc\n");

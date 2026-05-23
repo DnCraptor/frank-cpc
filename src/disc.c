@@ -1004,3 +1004,102 @@ void InsertDisk (int DrvNum) {
   }
   int_cause=4;
 }
+
+/* ---- Create a blank formatted DSK image -------------------------------- */
+
+int CreateBlankDsk(const char *path) {
+  /* Standard AMSDOS format: 40 tracks, 9 sectors/track (C1-C9), 512 B/sector */
+  const int num_tracks = 40;
+  const int num_sectors = 9;
+  const int sector_size = 512;
+  const int track_data_size = num_sectors * sector_size; /* 0x1200 */
+  const int track_total_size = 0x100 + track_data_size;  /* 0x1300 */
+
+  /* -- Disk header (0x100 bytes) -- */
+  byte header[0x100];
+  memset(header, 0, sizeof(header));
+  memcpy(header, "MV - CPCEMU Disk-File\r\nDisk-Info\r\n", 34);
+  header[0x30] = (byte)num_tracks;
+  header[0x31] = 1;  /* 1 head */
+  header[0x32] = (byte)(track_total_size & 0xFF);
+  header[0x33] = (byte)((track_total_size >> 8) & 0xFF);
+
+#ifdef PICO_BUILD
+  FIL fp;
+  UINT bw = 0;
+  if (f_open(&fp, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
+    return -1;
+  if (f_write(&fp, header, 0x100, &bw) != FR_OK || bw != 0x100) {
+    f_close(&fp);
+    return -1;
+  }
+
+  /* -- Track data -- */
+  byte track_hdr[0x100];
+  byte sector_data[512];
+  memset(sector_data, 0xE5, sizeof(sector_data));
+
+  for (int t = 0; t < num_tracks; t++) {
+    memset(track_hdr, 0, sizeof(track_hdr));
+    memcpy(track_hdr, "Track-Info\r\n", 12);
+    track_hdr[0x10] = (byte)t;   /* track number */
+    track_hdr[0x11] = 0;         /* head */
+    track_hdr[0x14] = 2;         /* BPS: 2 = 512 bytes */
+    track_hdr[0x15] = (byte)num_sectors;
+    track_hdr[0x16] = 0x4E;      /* GAP3 */
+    track_hdr[0x17] = 0xE5;      /* filler */
+
+    /* Sector info table */
+    for (int s = 0; s < num_sectors; s++) {
+      int off = 0x18 + s * 8;
+      track_hdr[off + 0] = (byte)t;          /* C - track */
+      track_hdr[off + 1] = 0;                /* H - head */
+      track_hdr[off + 2] = (byte)(0xC1 + s); /* R - sector ID */
+      track_hdr[off + 3] = 2;                /* N - BPS */
+      track_hdr[off + 4] = 0;                /* ST1 */
+      track_hdr[off + 5] = 0;                /* ST2 */
+    }
+
+    f_write(&fp, track_hdr, 0x100, &bw);
+    for (int s = 0; s < num_sectors; s++)
+      f_write(&fp, sector_data, (UINT)sector_size, &bw);
+  }
+
+  f_close(&fp);
+  return 0;
+#else
+  FILE *fp = fopen(path, "wb");
+  if (!fp) return -1;
+  fwrite(header, 1, 0x100, fp);
+
+  byte track_hdr[0x100];
+  byte sector_data[512];
+  memset(sector_data, 0xE5, sizeof(sector_data));
+
+  for (int t = 0; t < num_tracks; t++) {
+    memset(track_hdr, 0, sizeof(track_hdr));
+    memcpy(track_hdr, "Track-Info\r\n", 12);
+    track_hdr[0x10] = (byte)t;
+    track_hdr[0x11] = 0;
+    track_hdr[0x14] = 2;
+    track_hdr[0x15] = (byte)num_sectors;
+    track_hdr[0x16] = 0x4E;
+    track_hdr[0x17] = 0xE5;
+
+    for (int s = 0; s < num_sectors; s++) {
+      int off = 0x18 + s * 8;
+      track_hdr[off + 0] = (byte)t;
+      track_hdr[off + 1] = 0;
+      track_hdr[off + 2] = (byte)(0xC1 + s);
+      track_hdr[off + 3] = 2;
+    }
+
+    fwrite(track_hdr, 1, 0x100, fp);
+    for (int s = 0; s < num_sectors; s++)
+      fwrite(sector_data, 1, (size_t)sector_size, fp);
+  }
+
+  fclose(fp);
+  return 0;
+#endif
+}

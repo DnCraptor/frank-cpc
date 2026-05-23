@@ -29,6 +29,7 @@
 #include "printer.h"
 #include "aysound.h"
 #include "tape.h"
+#include "tape_rec.h"
 #include <stdio.h>
 
 byte Pio_A, Pio_B, Pio_C;
@@ -190,11 +191,20 @@ void OutZ80 (register word Port, register byte Value) {
 
   /* 0xF6xx: 8255 PIO C, select keyboard row */
   if ((Port & 0x0B00)==0x0200) {
+    byte old_c = Pio_C;
     KeyRow = Value & 15;
     Pio_C = Value;
 
     /* Cassette motor control: bit 4 of Port C */
     tape_set_motor((Value >> 4) & 1);
+
+    /* Cassette write recording: bit 5 */
+    if (tape_rec_active() && ((old_c ^ Pio_C) & 0x20)) {
+      extern int IRQCount, CPUZyklenBisInt;
+      unsigned long ts = (unsigned long)IRQCount * (unsigned long)CPUZyklenBisInt
+                       + (unsigned long)(CPUZyklenBisInt - cpu.ICount);
+      tape_rec_write_bit((Pio_C >> 5) & 1, ts);
+    }
 
     switch (Value & 0xC0) {
       case 0xC0:   /* AY register SELECTION */
@@ -220,6 +230,7 @@ void OutZ80 (register word Port, register byte Value) {
       /* Bit Set/Reset (BSR) mode for Port C.
        * Bits 3-1 = bit number, bit 0 = set(1)/reset(0). */
       int bit = (Value >> 1) & 7;
+      byte old_c = Pio_C;
       if (Value & 1)
         Pio_C |=  (1 << bit);
       else
@@ -230,6 +241,14 @@ void OutZ80 (register word Port, register byte Value) {
 
       /* Cassette motor control: bit 4 of Port C */
       tape_set_motor((Pio_C >> 4) & 1);
+
+      /* Cassette write recording: bit 5 */
+      if (tape_rec_active() && ((old_c ^ Pio_C) & 0x20)) {
+        extern int IRQCount, CPUZyklenBisInt;
+        unsigned long ts = (unsigned long)IRQCount * (unsigned long)CPUZyklenBisInt
+                         + (unsigned long)(CPUZyklenBisInt - cpu.ICount);
+        tape_rec_write_bit((Pio_C >> 5) & 1, ts);
+      }
     }
     ok = TRUE;
   }

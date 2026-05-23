@@ -45,7 +45,7 @@
 
 byte SystemROM[16384];
 byte *RAM;
-byte *UpperROM [8];
+byte *UpperROM [16];
 byte ROMPresent[256];
 
 unsigned long BankAddr[4];
@@ -77,7 +77,7 @@ int InitMem (void){
   for (i=0; i<=255; i++)
       ROMPresent[i]=FALSE;
 
-  for (i=1; i<=7; i++) {
+  for (i=1; i<=15; i++) {
     length = strlen (ROMFile[i]);
     if (length>1) {
       if (UpperROM[i]==NULL)
@@ -124,6 +124,44 @@ int InitMem (void){
 #endif
     }
   }
+
+#ifdef PICO_BUILD
+  /* Auto-scan for ROM files named "romNN.rom" (e.g. rom08.rom) in /cpc/rom/
+   * and load them into slot NN if not already populated by ROMFile[]. */
+  {
+    DIR dir;
+    FILINFO fno;
+    if (f_opendir(&dir, "/cpc/rom") == FR_OK) {
+      while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0]) {
+        int slot = -1;
+        if (fno.fname[0] == 'r' && fno.fname[1] == 'o' && fno.fname[2] == 'm' &&
+            fno.fname[3] >= '0' && fno.fname[3] <= '9') {
+          slot = fno.fname[3] - '0';
+          if (fno.fname[4] >= '0' && fno.fname[4] <= '9')
+            slot = slot * 10 + (fno.fname[4] - '0');
+        }
+        if (slot >= 1 && slot <= 15 && !ROMPresent[slot]) {
+          if (UpperROM[slot] == NULL)
+            UpperROM[slot] = (byte *)CPC_LARGE_ALLOC(16384);
+          FIL fp3;
+          UINT br = 0;
+          snprintf(filename, sizeof(filename), "/cpc/rom/%s", fno.fname);
+          if (f_open(&fp3, filename, FA_READ) == FR_OK) {
+            f_read(&fp3, UpperROM[slot], 16384, &br);
+            if (br >= 2 && UpperROM[slot][1] > 31) {
+              f_lseek(&fp3, 128);
+              f_read(&fp3, UpperROM[slot], 16384, &br);
+            }
+            f_close(&fp3);
+            ROMPresent[slot] = TRUE;
+            printf("ROM[%d] auto-loaded: %s (%u bytes)\n", slot, fno.fname, (unsigned)br);
+          }
+        }
+      }
+      f_closedir(&dir);
+    }
+  }
+#endif
 
   if (UpperROM[0]==NULL)
     UpperROM[0] = (byte *)CPC_LARGE_ALLOC(16384);
@@ -184,7 +222,7 @@ int InitMem (void){
 void ExitMem (void) {
   int i;
   printf ("Free ROM memory no ");
-  for (i=0; i<=7; i++) {
+  for (i=0; i<=15; i++) {
     printf ("%i  ",i);
     free (UpperROM[i]);
   }
@@ -265,7 +303,7 @@ byte RdZ80(register word Addr) {
   if ((Bank==0) && (LowerBlockIsRAM==FALSE))
     return SystemROM [Addr & 0x3FFF];
   if ((Bank==3) && (UpperBlockIsRAM==FALSE)) {
-    if (ROMPresent[ROMNumber])
+    if (ROMNumber < 16 && ROMPresent[ROMNumber])
       return UpperROM[ROMNumber][Addr & 0x3FFF];
     else
       return UpperROM[0][Addr & 0x3FFF];

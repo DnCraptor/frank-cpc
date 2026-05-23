@@ -29,7 +29,7 @@ extern int RS_UpBlockRAM;
 extern int RS_LoBlockRAM;
 
 extern byte *RAM;
-extern byte *UpperROM[8];
+extern byte *UpperROM[16];
 
 /* When non-empty, InitMem() loads this path as the BASIC ROM instead
  * of deriving the filename from CPCtype.  Set by cpc_settings_apply(). */

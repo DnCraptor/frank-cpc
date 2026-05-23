@@ -109,6 +109,11 @@ int FindSectorByID(int DrvNum, int trackIdx, byte sectorID, int startIdx);
 void InsertDisk (int DrvNum);
 void WriteDskImage (int DrvNum);
 
+/* Create a blank formatted DSK image at the given path.
+ * Standard format: 40 tracks, 1 head, 9 sectors/track (C1-C9), 512 bytes/sector.
+ * Returns 0 on success, -1 on failure. */
+int CreateBlankDsk(const char *path);
+
 void InitDisc (void);
 
 void ExitDisc (void);

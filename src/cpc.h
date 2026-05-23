@@ -38,7 +38,7 @@ extern char AYRegister[16];
 
 extern int CPCMaxMem;
 extern int CPCtype;
-extern char ROMFile[8][80];
+extern char ROMFile[16][80];
 extern char DiscDir[2][80];
 extern char Language[10];
 #ifndef PICO_BUILD

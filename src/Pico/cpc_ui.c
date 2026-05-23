@@ -13,6 +13,9 @@
 #include "cpc_loader.h"
 #include "cpc_tape_loader.h"
 #include "tape.h"
+#include "snapshot.h"
+#include "disc.h"
+#include "tape_rec.h"
 #include "ui_draw.h"
 #include "board_config.h"
 
@@ -39,9 +42,12 @@
 #define WIN_PAD 6
 
 /* Settings rows */
-#define SETTINGS_APPLY_ROW  CPC_SETTING_COUNT
-#define SETTINGS_BACK_ROW   (CPC_SETTING_COUNT + 1)
-#define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 2)
+#define SETTINGS_SAVE_SNA_ROW  CPC_SETTING_COUNT
+#define SETTINGS_LOAD_SNA_ROW  (CPC_SETTING_COUNT + 1)
+#define SETTINGS_TAPE_REC_ROW  (CPC_SETTING_COUNT + 2)
+#define SETTINGS_APPLY_ROW  (CPC_SETTING_COUNT + 3)
+#define SETTINGS_BACK_ROW   (CPC_SETTING_COUNT + 4)
+#define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 5)
 #define SETTINGS_VISIBLE_ROWS 10
 
 /* Disk browser rows are dynamic depending on whether a disk is mounted:
@@ -64,8 +70,8 @@ static int        s_setting_row      = 0;
 static int        s_settings_scroll  = 0;
 
 /* Disk menu state */
-static int        s_menu_row         = 0;   /* 0=Drive A, 1=Drive B, 2=Tape */
-#define MENU_ROWS 3
+static int        s_menu_row         = 0;   /* 0=Drive A, 1=Drive B, 2=Tape, 3=Create Blank Disk */
+#define MENU_ROWS 4
 
 /* Disk browser state */
 static int        s_disk_drive       = 0;
@@ -167,7 +173,20 @@ static bool handle_settings_page(unsigned int ks) {
             return true;
 
         case KS_Return:
-            if (s_setting_row == SETTINGS_APPLY_ROW) {
+            if (s_setting_row == SETTINGS_SAVE_SNA_ROW) {
+                snapshot_save("/cpc/snapshot.sna");
+                s_state = UI_HIDDEN;
+            } else if (s_setting_row == SETTINGS_LOAD_SNA_ROW) {
+                snapshot_load("/cpc/snapshot.sna");
+                s_state = UI_HIDDEN;
+            } else if (s_setting_row == SETTINGS_TAPE_REC_ROW) {
+                if (tape_rec_active()) {
+                    tape_rec_stop("/cpc/tape_out.cdt");
+                } else {
+                    tape_rec_start();
+                }
+                s_state = UI_HIDDEN;
+            } else if (s_setting_row == SETTINGS_APPLY_ROW) {
                 s_state = UI_SETTINGS_CONFIRM;
             } else if (s_setting_row == SETTINGS_BACK_ROW) {
                 s_state = UI_HIDDEN;
@@ -217,6 +236,10 @@ static bool handle_disk_menu_key(unsigned int ks) {
                 } else {
                     open_browser_for(2); /* 2 = tape mode */
                 }
+            } else if (s_menu_row == 3) {
+                /* Create Blank Disk in /cpc/disc/ */
+                CreateBlankDsk("/cpc/disc/blank.dsk");
+                s_state = UI_HIDDEN;
             }
             return true;
         default:
@@ -389,6 +412,18 @@ static void render_settings_page(uint8_t *fb, int stride) {
             ui_draw_string        (fb, stride, vx,                        y + 1, val, fg);
             if (sel) ui_draw_string(fb, stride, vx + vlen * UI_CHAR_W + 2, y + 1, ">", fg);
 
+        } else if (i == SETTINGS_SAVE_SNA_ROW) {
+            ui_draw_menu_item(fb, stride, x, y, cw,
+                              "Save Snapshot",
+                              (cw - 4) / UI_CHAR_W, sel);
+        } else if (i == SETTINGS_LOAD_SNA_ROW) {
+            ui_draw_menu_item(fb, stride, x, y, cw,
+                              "Load Snapshot",
+                              (cw - 4) / UI_CHAR_W, sel);
+        } else if (i == SETTINGS_TAPE_REC_ROW) {
+            ui_draw_menu_item(fb, stride, x, y, cw,
+                              tape_rec_active() ? "Stop Tape Recording" : "Start Tape Recording",
+                              (cw - 4) / UI_CHAR_W, sel);
         } else if (i == SETTINGS_APPLY_ROW) {
             ui_draw_menu_item(fb, stride, x, y, cw,
                               "Apply and Reset CPC",
@@ -501,6 +536,9 @@ static void render_disk_menu(uint8_t *fb, int stride) {
                 ui_draw_string(fb, stride, nx, y + 2, empty,
                                sel ? UI_COLOR_ACCENT_FG : UI_COLOR_DIM);
             }
+        } else if (row == 3) {
+            /* Create Blank Disk */
+            ui_draw_string(fb, stride, x + 4, y + 2, "Create Blank Disk", fg);
         }
 
         y += UI_LINE_H + 4;

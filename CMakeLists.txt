@@ -192,6 +192,7 @@ set(CPC_ADAPTED
     src/keyboard.c
     src/aysound.c
     src/snapshot.c
+    src/tape_rec.c
 )
 
 set(PICO_PORT
