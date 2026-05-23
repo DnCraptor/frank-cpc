@@ -228,12 +228,25 @@ static uint16_t g_row_screen_addr[CPC_FB_ROWS];
 static uint8_t g_crtc_row_ink[CPC_FB_ROWS][17]; /* per-row inks from CRTC snapshots */
 
 void pico_record_crtc_event(void) {
+    extern int IRQCount, CPUZyklenBisInt;
+    extern Z80 cpu;
+    uint32_t consumed = (uint32_t)(CPUZyklenBisInt - cpu.ICount);
+    uint32_t frame_cyc = (uint32_t)IRQCount * (uint32_t)CPUZyklenBisInt + consumed;
+    uint16_t sa = (HD6845Register[12] << 8) + HD6845Register[13];
+
+    /* Collapse R12/R13 pair writes: when the game writes R12 then R13
+     * (or vice versa) as two consecutive OUTs, the first write captures
+     * a transient address (new_R12 | old_R13) that was never displayed.
+     * If the last event is within 64 T-states, replace it. */
+    if (g_crtc_event_count > 0 &&
+        frame_cyc - g_crtc_events[g_crtc_event_count - 1].frame_cycle < 64) {
+        g_crtc_events[g_crtc_event_count - 1].frame_cycle = frame_cyc;
+        g_crtc_events[g_crtc_event_count - 1].screen_addr = sa;
+        memcpy(g_crtc_events[g_crtc_event_count - 1].ink_snapshot, Ink, 17);
+        return;
+    }
+
     if (g_crtc_event_count < CRTC_EVENT_MAX) {
-        extern int IRQCount, CPUZyklenBisInt;
-        extern Z80 cpu;
-        uint32_t consumed = (uint32_t)(CPUZyklenBisInt - cpu.ICount);
-        uint32_t frame_cyc = (uint32_t)IRQCount * (uint32_t)CPUZyklenBisInt + consumed;
-        uint16_t sa = (HD6845Register[12] << 8) + HD6845Register[13];
         g_crtc_events[g_crtc_event_count].frame_cycle = frame_cyc;
         g_crtc_events[g_crtc_event_count].screen_addr = sa;
         memcpy(g_crtc_events[g_crtc_event_count].ink_snapshot, Ink, 17);
@@ -257,9 +270,7 @@ int pico_get_crtc_event_count(void) {
 /* Build per-row screen address and ink tables from CRTC events. */
 static void pico_build_row_screen_addr(void) {
     uint16_t cur = g_frame_start_screen_addr;
-    /* Start with current AktInk for rows before first CRTC event */
-    const uint8_t *cur_ink = (g_crtc_event_count > 0)
-        ? g_crtc_events[0].ink_snapshot : AktInk;
+    const uint8_t *cur_ink = AktInk;  /* rows before first event use current palette */
     int ev_idx = 0;
     for (int r = 0; r < CPC_FB_ROWS; r++) {
         while (ev_idx < g_crtc_event_count) {
@@ -284,9 +295,35 @@ void pico_debug_crtc_events(void) {
  * CPC visible area: ~40 blank lines, then 200 visible lines.
  * scanline = frame_cycle / 256, fb_row = scanline - VBLANK_LINES */
 
+static int pico_is_vblank_blanking(void) {
+  /* Detect VBlank palette blanking: games like Prince of Persia set all
+   * inks 0-15 to the same color (black) during VBlank to hide VRAM updates,
+   * then restore the palette.  This creates a burst of ink events where
+   * 8+ distinct ink indices are set to the same value within a small cycle
+   * window (~1024 T-states = 4 scanlines).  Real raster effects change
+   * only 1-2 inks per scanline to different values. */
+  if (g_ink_event_count < 8) return 0;
+  for (int start = 0; start < g_ink_event_count - 7; start++) {
+    uint32_t win_start = g_ink_events[start].frame_cycle;
+    uint8_t target_val = g_ink_events[start].value;
+    uint16_t seen_inks = 0;  /* bitmask of ink indices set to target_val */
+    for (int j = start; j < g_ink_event_count; j++) {
+      if (g_ink_events[j].frame_cycle - win_start > 1024) break;
+      if (g_ink_events[j].value == target_val && g_ink_events[j].ink_idx < 16)
+        seen_inks |= (1u << g_ink_events[j].ink_idx);
+    }
+    int count = 0;
+    for (int b = 0; b < 16; b++) if (seen_inks & (1u << b)) count++;
+    if (count >= 8) return 1;
+  }
+  return 0;
+}
+
 static void pico_build_row_ink_table(void) {
   extern byte AktInk[];
-  if (!g_ink_events_active || g_ink_event_count == 0) {
+  if (!g_ink_events_active || g_ink_event_count == 0 || pico_is_vblank_blanking()) {
+    /* No ink events, or events are VBlank palette blanking — use AktInk
+     * uniformly.  Blanking is not a visible raster effect. */
     for (int r = 0; r < CPC_FB_ROWS; r++)
       memcpy(g_row_ink[r], AktInk, 17);
     memset(g_border_top, AktInk[16], CPC_TOP_PAD);
@@ -313,12 +350,13 @@ static void pico_build_row_ink_table(void) {
 
   for (int r = first_row; r < last_row; r++) {
     while (ev_idx < g_ink_event_count && ev_row[ev_idx] <= r) {
-      running_ink[g_ink_events[ev_idx].ink_idx] = g_ink_events[ev_idx].value;
+      if (ev_row[ev_idx] >= 0)
+        running_ink[g_ink_events[ev_idx].ink_idx] = g_ink_events[ev_idx].value;
       ev_idx++;
     }
     if (r < 0) {
-      /* Top padding row */
-      g_border_top[r + CPC_TOP_PAD] = running_ink[16];
+      /* Top padding row — use border from frame start ink */
+      g_border_top[r + CPC_TOP_PAD] = g_frame_start_ink[16];
     } else if (r < CPC_FB_ROWS) {
       /* Active area row */
       memcpy(g_row_ink[r], running_ink, 17);
@@ -326,6 +364,20 @@ static void pico_build_row_ink_table(void) {
       /* Bottom padding row */
       g_border_bot[r - CPC_FB_ROWS] = running_ink[16];
     }
+  }
+
+  /* Palette-blanking filter: games like Prince of Persia set all inks to
+   * the same color (black) during VBlank to hide VRAM updates, then
+   * restore the palette.  If our cycle mapping places those writes in the
+   * visible area, some rows get an all-same palette ("blanked").  Replace
+   * those rows with the end-of-frame palette (AktInk) since the blanking
+   * was never meant to be visible. */
+  for (int r = 0; r < CPC_FB_ROWS; r++) {
+    int blanked = 1;
+    for (int k = 1; k <= 15; k++) {
+      if (g_row_ink[r][k] != g_row_ink[r][0]) { blanked = 0; break; }
+    }
+    if (blanked) memcpy(g_row_ink[r], AktInk, 17);
   }
 }
 
@@ -532,15 +584,46 @@ static void pico_build_display_modes(uint8_t *display_mode) {
     int ev_idx = 0;
     for (int r = 0; r < CPC_FB_ROWS; r++) {
       while (ev_idx < g_mode_event_count && ev_row[ev_idx] <= r) {
-        running_mode = g_mode_events[ev_idx].mode;
+        if (ev_row[ev_idx] >= 0)
+          running_mode = g_mode_events[ev_idx].mode;
         ev_idx++;
       }
       display_mode[r] = running_mode;
     }
 
-    /* Still compute split ink for status bar if needed */
+    /* After building per-row mode from events, also apply period-based
+     * split ink detection for status bars (like POP's bottom health bar
+     * which uses different palette but same mode). */
     g_has_split_ink = 0;
     g_split_row = -1;
+
+    /* Check if period 0 uses a different mode (status bar split). */
+    uint8_t dom = display_mode[0];
+    if (g_period_mode_snap[0] != dom && g_period_mode_snap[0] < 3) {
+      int split_row = (384 + (int)LineOffset) >> 1;
+      if (split_row >= CPC_FB_ROWS) split_row -= CPC_FB_ROWS;
+      g_split_row = split_row;
+      for (int r = split_row; r < CPC_FB_ROWS; r++)
+        display_mode[r] = g_period_mode_snap[0];
+    }
+
+    /* Detect mode split from events OR period snap: find first row where
+     * mode differs from row 0.  If split found, use period 0 ink snapshot
+     * as the status bar palette. */
+    for (int r = 1; r < CPC_FB_ROWS; r++) {
+      if (display_mode[r] != dom) {
+        g_split_row = r;
+        g_split_ink_changed = 0;
+        for (int k = 0; k < 17; k++) {
+          uint8_t new_ink = g_period_ink[0][k];
+          if (new_ink != g_split_ink[k]) g_split_ink_changed = 1;
+          g_prev_split_ink[k] = g_split_ink[k];
+          g_split_ink[k] = new_ink;
+        }
+        g_has_split_ink = 1;
+        break;
+      }
+    }
     return;
   }
 
@@ -947,49 +1030,13 @@ void RedrawScreenImage(void) {
       }
     }
   } else if (g_crtc_event_count > 0) {
-    /* Detect simple scroll vs true mid-frame split effect.
-     * A simple scroll (BASIC changing R12/R13) produces 1-2 CRTC events
-     * within a few T-states.  On real CPC hardware (CRTC type 1), R12/R13
-     * are latched at VSync, so the change applies uniformly to the next
-     * frame — no mid-frame split.  If all events are clustered within
-     * ~128 T-states, treat as a simple scroll and use the standard path
-     * (which already has the post-scroll LineOffset applied uniformly). */
-    int is_simple_scroll = 1;
-    if (g_crtc_event_count > 4) {
-      is_simple_scroll = 0;
-    } else {
-      uint32_t first_cyc = g_crtc_events[0].frame_cycle;
-      uint32_t last_cyc  = g_crtc_events[g_crtc_event_count - 1].frame_cycle;
-      if (last_cyc - first_cyc > 128)
-        is_simple_scroll = 0;
-    }
-    if (is_simple_scroll) goto standard_path;
-
-    /* ---- Per-row CRTC split rendering ----
-     * Used when R12/R13 change mid-frame (wipe/split effects).
-     * Each row may use a different screen start address. */
-    pico_build_row_screen_addr();
-    for (int r = 0; r < CPC_FB_ROWS; r++) {
-        uint16_t sa = g_row_screen_addr[r];
-        uint16_t row_scroff = (sa & 1023) << 1;
-        uint16_t row_scrblk = (sa << 2) & 0xC000;
-        int row_lineoff = (((sa & 1023) / 40) << 4);
-
-        unsigned int mode = display_mode[r];
-        const uint8_t *ink = use_row_ink ? g_row_ink[r]
-                           : g_crtc_row_ink[r];
-
-        int bank = r % 8;
-        int z = bank << 11;
-        int lo_chars = row_lineoff / 16;
-        int C = (r / 8 - lo_chars + 25) % 25;
-
-        int s_base = C * 80;
-        for (int b = 0; b < 80; b++) {
-            word Addr = (word)(row_scrblk + ((row_scroff + z + s_base + b) & 0x3FFF));
-            pico_render_byte_at(RAM[Addr], mode, ink, b * 4, r);
-        }
-    }
+    /* CRTC R12/R13 changes detected mid-frame.  On CPC CRTC type 1
+     * (UM6845R), R12/R13 are latched at the start of each frame, so
+     * mid-frame changes don't create visible splits.  Use the standard
+     * path with the current (post-frame) screen address.  The CRTC
+     * events still serve to trigger a full redraw (vs dirty-row) in
+     * cpc.c, which is needed for smooth hardware scrolling. */
+    goto standard_path;
   } else {
     /* ---- Standard 40×25 rendering path ---- */
     standard_path:
