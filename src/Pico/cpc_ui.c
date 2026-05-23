@@ -430,7 +430,9 @@ static void render_settings_page(uint8_t *fb, int stride) {
                               (cw - 4) / UI_CHAR_W, sel);
         } else if (i == SETTINGS_APPLY_ROW) {
             ui_draw_menu_item(fb, stride, x, y, cw,
-                              "Apply and Reset CPC",
+                              g_cpc_settings_dirty
+                                  ? "Reset Emulator (!)"
+                                  : "Reset Emulator",
                               (cw - 4) / UI_CHAR_W, sel);
         } else if (i == SETTINGS_BACK_ROW) {
             ui_draw_menu_item(fb, stride, x, y, cw,

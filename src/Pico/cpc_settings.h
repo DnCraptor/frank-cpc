@@ -49,6 +49,10 @@ typedef struct {
 
 extern cpc_settings_t g_cpc_settings;
 
+/* True when a reset-requiring setting has been changed but the CPC
+ * has not been reset yet.  Cleared by cpc_settings_do_reset(). */
+extern bool g_cpc_settings_dirty;
+
 /* Number of choices for a given setting. */
 int cpc_settings_choices(cpc_setting_id_t id);
 

@@ -82,6 +82,8 @@ cpc_settings_t g_cpc_settings = {
     .rom_idx  = 0,  /* Auto     */
 };
 
+bool g_cpc_settings_dirty = false;
+
 /* ---- value tables ----------------------------------------------------- */
 
 static const char *MODEL_LABELS[]    = { "CPC 464", "CPC 664", "CPC 6128" };
@@ -169,6 +171,8 @@ static void step_u8(uint8_t *v, int delta, int n) {
 void cpc_settings_step(cpc_setting_id_t id, int delta) {
     int n = cpc_settings_choices(id);
     if (n <= 0) return;
+    if (cpc_settings_needs_reset(id))
+        g_cpc_settings_dirty = true;
     switch (id) {
         case CPC_SETTING_MODEL:    step_u8(&g_cpc_settings.model,    delta, n); break;
         case CPC_SETTING_MEMORY:   step_u8(&g_cpc_settings.memory,   delta, n); break;
@@ -224,6 +228,7 @@ void cpc_settings_apply(void) {
 /* Full CPC reset applying all settings.  Called from cpc_ui when the
  * user selects "Apply & Reset". */
 void cpc_settings_do_reset(void) {
+    g_cpc_settings_dirty = false;
     cpc_settings_apply();
     printf("settings: reset CPCtype=%d CPCMaxMem=%d MonoScreen=%d Customer=%d rom=%s\n",
            CPCtype, CPCMaxMem, MonoScreen, (int)(unsigned char)Customer,

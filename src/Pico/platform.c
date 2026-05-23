@@ -478,6 +478,8 @@ static const uint8_t ps2_to_cpc_matrix[CPC_MATRIX_SIZE][2] = {
 
 void cpc_ps2_feed_events(void) {
     static bool shifted = false;
+    static bool ctrl_held = false;
+    static bool alt_held = false;
     int pressed;
     unsigned char key;
 
@@ -487,11 +489,21 @@ void cpc_ps2_feed_events(void) {
     while (ps2kbd_get_key(&pressed, &key)) {
         if (key == PSC_LShift || key == PSC_RShift)
             shifted = pressed != 0;
+        if (key == PSC_LCtrl || key == PSC_RCtrl)
+            ctrl_held = pressed != 0;
+        if (key == PSC_LAlt || key == PSC_RAlt)
+            alt_held = pressed != 0;
 
         unsigned int ks = scancode_to_keysym((unsigned int)key,
                                              shifted && key != PSC_LShift && key != PSC_RShift);
 
         if (pressed) {
+            /* Ctrl+Alt+Delete: reset emulator */
+            if (ks == KS_Delete && ctrl_held && alt_held) {
+                extern void cpc_settings_do_reset(void);
+                cpc_settings_do_reset();
+                continue;
+            }
             /* F11: disk browser menu */
             if (ks == KS_F11) {
                 cpc_ui_open_disk_menu();
