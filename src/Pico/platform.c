@@ -86,7 +86,7 @@ void cpc_init_palette(void) {
 }
 
 void cpc_frame_present(void) {
-#if !defined(VGA_HSTX)
+#if !defined(VGA_HSTX) && !defined(VIDEO_COMPOSITE)
     /* VGA tearing prevention: wait until the VGA ISR has consumed the
      * previous pending buffer (at VSync) before we start overwriting the
      * back buffer.  Without this, the emulator can write to the buffer

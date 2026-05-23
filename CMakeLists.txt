@@ -25,8 +25,18 @@ else()
     set(CPU_VOLTAGE "VREG_VOLTAGE_1_50")
 endif()
 
-set(HDMI_DRIVER "HDMI_PIO" CACHE STRING "HDMI driver: HDMI_PIO (I2S audio) or HDMI_PIO_AUDIO (HDMI audio) or VGA_HSTX (HSTX VGA + I2S)")
-set_property(CACHE HDMI_DRIVER PROPERTY STRINGS "HDMI_PIO" "HDMI_PIO_AUDIO" "VGA_HSTX")
+set(HDMI_DRIVER "HDMI_PIO" CACHE STRING "HDMI driver: HDMI_PIO (I2S audio) or HDMI_PIO_AUDIO (HDMI audio) or VGA_HSTX (HSTX VGA + I2S) or COMPOSITE (composite TV + I2S)")
+set_property(CACHE HDMI_DRIVER PROPERTY STRINGS "HDMI_PIO" "HDMI_PIO_AUDIO" "VGA_HSTX" "COMPOSITE")
+
+# Composite-TV needs ~378 MHz: the TV scanline callback fires via a
+# flash-resident alarm-pool dispatcher at 30 kHz, and at 252 MHz the
+# dispatch overhead alone consumes most of each ~32 µs window.
+if(HDMI_DRIVER STREQUAL "COMPOSITE" AND CPU_SPEED LESS 300)
+    message(STATUS "Overriding CPU_SPEED to 378 MHz for composite TV")
+    set(CPU_SPEED "378" CACHE STRING "" FORCE)
+    # Recompute voltage for the new speed
+    set(CPU_VOLTAGE "VREG_VOLTAGE_1_60")
+endif()
 
 message(STATUS "frank-cpc  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}  HDMI: ${HDMI_DRIVER}")
 
@@ -129,6 +139,78 @@ elseif(HDMI_DRIVER STREQUAL "VGA_HSTX")
         hardware_exception
         hardware_watchdog
         disphstx
+    )
+
+elseif(HDMI_DRIVER STREQUAL "COMPOSITE")
+    # --- COMPOSITE: Software composite TV (PAL/NTSC) + I2S audio ---
+    add_library(tv_driver STATIC
+        drivers/tv/tv-software.c
+        drivers/tv/graphics.c
+    )
+    target_include_directories(tv_driver PUBLIC drivers drivers/tv)
+    set(_tv_include_flags
+        "-include ${CMAKE_CURRENT_SOURCE_DIR}/drivers/tv/tv_rename.h"
+        "-include ${CMAKE_CURRENT_SOURCE_DIR}/drivers/tv/tv_mem.h"
+    )
+    string(JOIN " " _tv_include_flags_str ${_tv_include_flags})
+    set_source_files_properties(
+        drivers/tv/tv-software.c
+        drivers/tv/graphics.c
+        PROPERTIES
+        COMPILE_FLAGS "${_tv_include_flags_str}"
+    )
+    target_compile_options(tv_driver PRIVATE
+        -Wno-error
+        -Wno-incompatible-pointer-types
+        -Wno-all
+        -fno-tree-loop-distribute-patterns
+        -fno-builtin-memset
+        -fno-builtin-memcpy
+    )
+    target_compile_definitions(tv_driver PUBLIC TV_BASE_PIN=12 PLATFORM_M2=1)
+    target_link_libraries(tv_driver
+        pico_stdlib
+        pico_multicore
+        hardware_dma
+        hardware_pio
+        hardware_clocks
+    )
+
+    add_library(drivers
+        drivers/HDMI_tv.c
+        drivers/crash_handler.c
+        drivers/audio.c
+        drivers/audio_i2s_opt.S
+        drivers/psram_init.c
+        drivers/psram_allocator.c
+        drivers/dlmalloc.c
+        drivers/uart_logging.c
+    )
+
+    target_include_directories(drivers PUBLIC drivers src)
+    target_compile_definitions(drivers PUBLIC
+        BOARD_M2
+        PLATFORM_M2=1
+        VIDEO_COMPOSITE=1
+    )
+    target_compile_definitions(drivers PRIVATE
+        PSRAM_MAX_FREQ_MHZ=${PSRAM_SPEED}
+    )
+    pico_generate_pio_header(drivers ${CMAKE_CURRENT_LIST_DIR}/drivers/audio_i2s.pio)
+    target_link_libraries(drivers
+        pico_stdlib
+        pico_multicore
+        hardware_dma
+        hardware_pio
+        hardware_pwm
+        hardware_spi
+        hardware_gpio
+        hardware_clocks
+        hardware_irq
+        hardware_vreg
+        hardware_exception
+        hardware_watchdog
+        tv_driver
     )
 
 else()
@@ -252,6 +334,9 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
     target_include_directories(frank-cpc PRIVATE frank-hdmi-sound/src)
 elseif(HDMI_DRIVER STREQUAL "VGA_HSTX")
     target_compile_definitions(frank-cpc PRIVATE VGA_HSTX=1)
+elseif(HDMI_DRIVER STREQUAL "COMPOSITE")
+    target_compile_definitions(frank-cpc PRIVATE VIDEO_COMPOSITE=1)
+    target_link_libraries(frank-cpc tv_driver)
 endif()
 
 target_compile_options(frank-cpc PRIVATE

@@ -10,6 +10,7 @@
 #   HDMI_DRIVER: HDMI_PIO (default, I2S audio)
 #                HDMI_PIO_AUDIO (HDMI audio)
 #                VGA_HSTX (HSTX VGA + I2S audio on Core 0)
+#                COMPOSITE (composite TV + I2S audio on Core 0)
 #
 set -e
 

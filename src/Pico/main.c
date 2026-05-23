@@ -152,8 +152,8 @@ void __time_critical_func(render_core_i2s)(void) {
     }
 }
 
-#elif defined(VGA_HSTX)
-/* VGA_HSTX: DispHSTX owns Core 1 for VGA scanout.
+#elif defined(VGA_HSTX) || defined(VIDEO_COMPOSITE)
+/* VGA_HSTX / VIDEO_COMPOSITE: Core 1 is claimed for scanout.
  * I2S audio ring buffer + render loop on Core 0.
  * audio_ring_push_mono is called by aysound.c; i2s_audio_drain()
  * is called once per frame from the emulation loop. */
@@ -372,6 +372,20 @@ int main(void) {
     graphics_set_shift((320 - FB_W) / 2, 0);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
     printf("Video initialized (VGA HSTX %dx%d)\n", FB_W, CPC_SCREEN_LINES);
+#elif defined(VIDEO_COMPOSITE)
+    /* VIDEO_COMPOSITE: bring TV driver up BEFORE SD + PS/2.
+     * graphics_init() launches Core 1 for composite scanout.
+     * Restore clk_peri to 48 MHz after init so SD SPI works correctly. */
+    printf("Initializing video output (Composite TV, pre-SD)...\n");
+    graphics_init(g_out_HDMI);
+    clock_configure_undivided(clk_peri,
+                              0,
+                              CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
+                              48000000);
+    graphics_set_buffer(SCREEN[0]);
+    graphics_set_res(FB_W, CPC_SCREEN_LINES);
+    graphics_set_mode(GRAPHICSMODE_DEFAULT);
+    printf("Video initialized (Composite TV %dx%d)\n", FB_W, CPC_SCREEN_LINES);
 #endif
 
     FRESULT fr = f_mount(&g_fs, "", 1);
@@ -388,6 +402,10 @@ int main(void) {
     /* VGA_HSTX: DispHSTX already claimed Core 1. I2S audio on Core 0. */
     i2s_audio_init_core0();
     printf("VGA_HSTX: Core 1 running DispHSTX scanout, I2S audio on Core 0\n");
+#elif defined(VIDEO_COMPOSITE)
+    /* VIDEO_COMPOSITE: TV driver already claimed Core 1. I2S audio on Core 0. */
+    i2s_audio_init_core0();
+    printf("COMPOSITE: Core 1 running TV scanout, I2S audio on Core 0\n");
 #elif defined(HDMI_PIO_AUDIO)
     /* HDMI_PIO_AUDIO: VGA autodetect, then HDMI or VGA init. */
     {
