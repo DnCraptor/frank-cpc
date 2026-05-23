@@ -48,7 +48,7 @@
 #define SETTINGS_APPLY_ROW  (CPC_SETTING_COUNT + 3)
 #define SETTINGS_BACK_ROW   (CPC_SETTING_COUNT + 4)
 #define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 5)
-#define SETTINGS_VISIBLE_ROWS 10
+#define SETTINGS_VISIBLE_ROWS 12
 
 /* Disk browser rows are dynamic depending on whether a disk is mounted:
  *   mounted:   row 0=[Eject]  row 1=[..]  row 2+=entries
@@ -132,11 +132,7 @@ void cpc_ui_open_disk_browser(int drv) {
 extern void cpc_settings_do_reset(void);
 
 static bool handle_settings_page(unsigned int ks) {
-    /* Keep selected row inside the visible scroll window */
-    if (s_setting_row < s_settings_scroll)
-        s_settings_scroll = s_setting_row;
-    else if (s_setting_row >= s_settings_scroll + SETTINGS_VISIBLE_ROWS)
-        s_settings_scroll = s_setting_row - SETTINGS_VISIBLE_ROWS + 1;
+    bool handled = false;
 
     switch (ks) {
         case KS_Escape:
@@ -145,22 +141,22 @@ static bool handle_settings_page(unsigned int ks) {
 
         case KS_Up:
             if (--s_setting_row < 0) s_setting_row = SETTINGS_TOTAL_ROWS - 1;
-            return true;
+            handled = true; break;
 
         case KS_Down:
             if (++s_setting_row >= SETTINGS_TOTAL_ROWS) s_setting_row = 0;
-            return true;
+            handled = true; break;
 
         case KS_Page_Up:
             s_setting_row -= SETTINGS_VISIBLE_ROWS / 2;
             if (s_setting_row < 0) s_setting_row = 0;
-            return true;
+            handled = true; break;
 
         case KS_Page_Down:
             s_setting_row += SETTINGS_VISIBLE_ROWS / 2;
             if (s_setting_row >= SETTINGS_TOTAL_ROWS)
                 s_setting_row = SETTINGS_TOTAL_ROWS - 1;
-            return true;
+            handled = true; break;
 
         case KS_Left:
             if (s_setting_row < CPC_SETTING_COUNT)
@@ -198,6 +194,14 @@ static bool handle_settings_page(unsigned int ks) {
         default:
             return false;
     }
+
+    /* Keep selected row inside the visible scroll window (after movement) */
+    if (s_setting_row < s_settings_scroll)
+        s_settings_scroll = s_setting_row;
+    else if (s_setting_row >= s_settings_scroll + SETTINGS_VISIBLE_ROWS)
+        s_settings_scroll = s_setting_row - SETTINGS_VISIBLE_ROWS + 1;
+
+    return handled;
 }
 
 static bool handle_settings_confirm(unsigned int ks) {
