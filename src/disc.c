@@ -831,7 +831,41 @@ void WriteDskImage (int DrvNum) {
   dsk[DrvNum].fid = open(dsk[DrvNum].ImageName, O_RDWR);
   if (dsk[DrvNum].fid > 0) {
     write(dsk[DrvNum].fid, &dsk[DrvNum].DiskHeader, 0x100);
-    write(dsk[DrvNum].fid, dsk[DrvNum].Tracks, dsk[DrvNum].TrackSize);
+
+    int total_tracks = dsk[DrvNum].DiskHeader.nbof_tracks * dsk[DrvNum].DiskHeader.nbof_heads;
+    int track;
+
+    if (dsk[DrvNum].extended) {
+      byte *track_size_table = &dsk[DrvNum].DiskHeader.unused[0];
+      for (track = 0; track < total_tracks; track++) {
+        unsigned int track_total_size = (unsigned int)track_size_table[track] * 256;
+        if (track_total_size == 0) continue;
+
+        struct track_type* trackHeader = &dsk[DrvNum].Tracks[track];
+        write(dsk[DrvNum].fid, trackHeader, 0x100);
+
+        unsigned int data_size = track_total_size - 0x100;
+        if (data_size > sizeof(trackHeader->DiscData))
+          data_size = sizeof(trackHeader->DiscData);
+        write(dsk[DrvNum].fid, trackHeader->DiscData, data_size);
+      }
+    } else {
+      for (track = 0; track < total_tracks; track++) {
+        struct track_type* trackHeader = &dsk[DrvNum].Tracks[track];
+        write(dsk[DrvNum].fid, trackHeader, 0x100);
+
+        unsigned int data_size = dsk[DrvNum].DiskHeader.tracksize - 0x100;
+        if (data_size > sizeof(trackHeader->DiscData))
+          data_size = sizeof(trackHeader->DiscData);
+        write(dsk[DrvNum].fid, trackHeader->DiscData, data_size);
+      }
+    }
+
+#ifdef PICO_BUILD
+    f_truncate((FIL*)(uintptr_t)dsk[DrvNum].fid);
+#else
+    ftruncate(dsk[DrvNum].fid, lseek(dsk[DrvNum].fid, 0, SEEK_CUR));
+#endif
     close(dsk[DrvNum].fid);
     printf(" .... ok!");
   } else {
@@ -950,7 +984,8 @@ void InsertDisk (int DrvNum) {
       /*******************************************************/
       /** Standard DSK: fixed track size                    **/
       /*******************************************************/
-      readbytes = (unsigned long)dsk[DrvNum].DiskHeader.tracksize * total_tracks;
+      /* Allocate based on struct size since we index Tracks[] as an array */
+      readbytes = (unsigned long)total_tracks * sizeof(struct track_type);
 
       if ( dsk[DrvNum].TrackSize < readbytes ) {
 #ifndef PICO_BUILD
