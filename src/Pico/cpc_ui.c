@@ -431,7 +431,7 @@ static void render_settings_page(uint8_t *fb, int stride) {
         } else if (i == SETTINGS_APPLY_ROW) {
             ui_draw_menu_item(fb, stride, x, y, cw,
                               g_cpc_settings_dirty
-                                  ? "Reset Emulator (!)"
+                                  ? "Save changes and restart"
                                   : "Reset Emulator",
                               (cw - 4) / UI_CHAR_W, sel);
         } else if (i == SETTINGS_BACK_ROW) {
