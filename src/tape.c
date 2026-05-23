@@ -351,9 +351,11 @@ void tape_init(void) {
     tape_seekcccc = 0;
 
 #ifdef PICO_BUILD
+#ifdef TAPE_IN_PIN
     gpio_init(TAPE_IN_PIN);
     gpio_set_dir(TAPE_IN_PIN, GPIO_IN);
     gpio_pull_down(TAPE_IN_PIN);
+#endif
 #endif
 }
 
@@ -432,8 +434,13 @@ void tape_set_polarity(int pol) { tape_polarity = pol ? 1 : 0; }
 
 int tape_get_status(void) {
 #ifdef PICO_BUILD
-    if (s_tape_gpio_mode)
+    if (s_tape_gpio_mode) {
+#ifdef TAPE_IN_PIN
         return gpio_get(TAPE_IN_PIN) ? 1 : 0;
+#else
+        return 0;
+#endif
+    }
 #endif
     return tape_status ^ tape_polarity;
 }

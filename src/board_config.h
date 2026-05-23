@@ -8,9 +8,10 @@
 /*
  * board_config.h — Board configuration dispatcher for frank-cpc.
  *
- * Supported platform: M2 (Murmulator 2.0)
- * Video: PIO HDMI (default, runtime VGA autodetect)
- * Audio: I2S (HAS_I2S from board_m2.h)
+ * Supported platforms: M1 (Murmulator 1.x), M2 (Murmulator 2.0),
+ *                      Z0 (Waveshare RP2350-PiZero)
+ *
+ * Select platform via CMake: -DPLATFORM=m1|m2|z0
  */
 #ifndef BOARD_CONFIG_H
 #define BOARD_CONFIG_H
@@ -19,13 +20,15 @@
 #include "hardware/structs/sysinfo.h"
 #include "hardware/vreg.h"
 
-#if !defined(PLATFORM_M2)
-#  define PLATFORM_M2 1
+#if defined(PLATFORM_M1)
+#  include "board_m1.h"
+#elif defined(PLATFORM_Z0)
+#  include "board_z0.h"
+#elif defined(PLATFORM_M2)
+#  include "board_m2.h"
+#else
+#  error "No platform defined — set -DPLATFORM=m1|m2|z0 in CMake"
 #endif
-#ifndef BOARD_M2
-#  define BOARD_M2 1
-#endif
-#include "board_m2.h"
 
 #ifndef CPU_CLOCK_MHZ
 #define CPU_CLOCK_MHZ 252

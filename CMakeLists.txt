@@ -7,12 +7,55 @@
 
 cmake_minimum_required(VERSION 3.13)
 
-set(PLATFORM "m2" CACHE STRING "Target platform")
-if(NOT PLATFORM STREQUAL "m2")
-    message(FATAL_ERROR "frank-cpc supports only PLATFORM=m2")
+# Platform selection: m1, m2, z0
+set(PLATFORM "m2" CACHE STRING "Target platform: m1, m2, z0")
+set_property(CACHE PLATFORM PROPERTY STRINGS m1 m2 z0)
+
+if(NOT PLATFORM STREQUAL "m1" AND NOT PLATFORM STREQUAL "m2" AND NOT PLATFORM STREQUAL "z0")
+    message(FATAL_ERROR "Unknown PLATFORM '${PLATFORM}' — must be m1, m2, or z0")
 endif()
 
-set(PICO_BOARD "pico2" CACHE STRING "Pico board type")
+# Z0 (Waveshare RP2350-PiZero) requires a custom board definition
+if(PLATFORM STREQUAL "z0")
+    set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/src/boards CACHE PATH "" FORCE)
+    set(PICO_BOARD "waveshare_rp2350_pizero" CACHE STRING "Board type" FORCE)
+else()
+    set(PICO_BOARD "pico2" CACHE STRING "Board type" FORCE)
+endif()
+
+# Per-platform compile definition and pin configuration
+if(PLATFORM STREQUAL "m1")
+    set(PLATFORM_DEF PLATFORM_M1)
+    set(BOARD_DEF BOARD_M1)
+    set(SD_CS 5)
+    set(SD_SCK 2)
+    set(SD_MOSI 3)
+    set(SD_MISO 4)
+    set(HDMI_PIN 6)
+    set(VGA_PIN 6)
+    set(TV_PIN 6)
+elseif(PLATFORM STREQUAL "z0")
+    set(PLATFORM_DEF PLATFORM_Z0)
+    set(BOARD_DEF BOARD_Z0)
+    set(SD_CS 43)
+    set(SD_SCK 30)
+    set(SD_MOSI 31)
+    set(SD_MISO 40)
+    set(HDMI_PIN 32)
+    set(VGA_PIN 32)
+else()
+    # m2
+    set(PLATFORM_DEF PLATFORM_M2)
+    set(BOARD_DEF BOARD_M2)
+    set(SD_CS 5)
+    set(SD_SCK 6)
+    set(SD_MOSI 7)
+    set(SD_MISO 4)
+    set(HDMI_PIN 12)
+    set(VGA_PIN 12)
+    set(TV_PIN 12)
+endif()
+
 set(CPU_SPEED  "252" CACHE STRING "CPU clock in MHz")
 set(PSRAM_SPEED "133" CACHE STRING "PSRAM max frequency in MHz")
 set(FLASH_SPEED "66"  CACHE STRING "Flash target max frequency in MHz")
@@ -25,8 +68,20 @@ else()
     set(CPU_VOLTAGE "VREG_VOLTAGE_1_50")
 endif()
 
+# Video output selection
 set(HDMI_DRIVER "HDMI_PIO" CACHE STRING "HDMI driver: HDMI_PIO (I2S audio) or HDMI_PIO_AUDIO (HDMI audio) or VGA_HSTX (HSTX VGA + I2S) or COMPOSITE (composite TV + I2S)")
 set_property(CACHE HDMI_DRIVER PROPERTY STRINGS "HDMI_PIO" "HDMI_PIO_AUDIO" "VGA_HSTX" "COMPOSITE")
+
+# Validate video driver vs platform constraints
+if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO" AND NOT PLATFORM STREQUAL "m2")
+    message(FATAL_ERROR "HDMI_PIO_AUDIO is only supported on the M2 platform (got '${PLATFORM}')")
+endif()
+if(HDMI_DRIVER STREQUAL "VGA_HSTX" AND NOT PLATFORM STREQUAL "m2")
+    message(FATAL_ERROR "VGA_HSTX is only supported on the M2 platform (got '${PLATFORM}')")
+endif()
+if(HDMI_DRIVER STREQUAL "COMPOSITE" AND PLATFORM STREQUAL "z0")
+    message(FATAL_ERROR "Composite TV is not supported on the Z0 platform")
+endif()
 
 # Composite-TV needs ~378 MHz: the TV scanline callback fires via a
 # flash-resident alarm-pool dispatcher at 30 kHz, and at 252 MHz the
@@ -38,7 +93,7 @@ if(HDMI_DRIVER STREQUAL "COMPOSITE" AND CPU_SPEED LESS 300)
     set(CPU_VOLTAGE "VREG_VOLTAGE_1_60")
 endif()
 
-message(STATUS "frank-cpc  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}  HDMI: ${HDMI_DRIVER}")
+message(STATUS "frank-cpc  Platform: ${PLATFORM}  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}  HDMI: ${HDMI_DRIVER}")
 
 include(pico_sdk_import.cmake)
 
@@ -56,6 +111,9 @@ add_subdirectory(drivers/fatfs)
 add_subdirectory(drivers/sdcard)
 add_subdirectory(drivers/ps2)
 add_subdirectory(drivers/nespad)
+
+# Propagate platform define to sub-library targets that include board_config.h
+target_compile_definitions(ps2_driver PRIVATE ${PLATFORM_DEF}=1)
 
 if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
     # --- HDMI_PIO_AUDIO: frank-hdmi-sound library (HDMI-embedded audio) ---
@@ -78,8 +136,8 @@ if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
 
     target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
     target_compile_definitions(drivers PUBLIC
-        BOARD_M2
-        PLATFORM_M2=1
+        ${BOARD_DEF}
+        ${PLATFORM_DEF}=1
         HDMI_PIO_AUDIO=1
     )
     target_compile_definitions(drivers PRIVATE
@@ -119,8 +177,8 @@ elseif(HDMI_DRIVER STREQUAL "VGA_HSTX")
 
     target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
     target_compile_definitions(drivers PUBLIC
-        BOARD_M2
-        PLATFORM_M2=1
+        ${BOARD_DEF}
+        ${PLATFORM_DEF}=1
         VGA_HSTX=1
     )
     target_compile_definitions(drivers PRIVATE
@@ -169,7 +227,7 @@ elseif(HDMI_DRIVER STREQUAL "COMPOSITE")
         -fno-builtin-memset
         -fno-builtin-memcpy
     )
-    target_compile_definitions(tv_driver PUBLIC TV_BASE_PIN=12 PLATFORM_M2=1)
+    target_compile_definitions(tv_driver PUBLIC TV_BASE_PIN=${TV_PIN} ${PLATFORM_DEF}=1)
     target_link_libraries(tv_driver
         pico_stdlib
         pico_multicore
@@ -192,8 +250,8 @@ elseif(HDMI_DRIVER STREQUAL "COMPOSITE")
 
     target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
     target_compile_definitions(drivers PUBLIC
-        BOARD_M2
-        PLATFORM_M2=1
+        ${BOARD_DEF}
+        ${PLATFORM_DEF}=1
         VIDEO_COMPOSITE=1
     )
     target_compile_definitions(drivers PRIVATE
@@ -235,8 +293,8 @@ else()
 
     target_include_directories(drivers PUBLIC drivers drivers/pwm_audio src)
     target_compile_definitions(drivers PUBLIC
-        BOARD_M2
-        PLATFORM_M2=1
+        ${BOARD_DEF}
+        ${PLATFORM_DEF}=1
         HDMI_PIO=1
     )
     target_compile_definitions(drivers PRIVATE
@@ -318,8 +376,8 @@ target_include_directories(frank-cpc PRIVATE
 )
 
 target_compile_definitions(frank-cpc PRIVATE
-    BOARD_M2
-    PLATFORM_M2=1
+    ${BOARD_DEF}
+    ${PLATFORM_DEF}=1
     PICO_BUILD=1
     PICO_ON_DEVICE=1
     CPU_CLOCK_MHZ=${CPU_SPEED}
@@ -328,10 +386,10 @@ target_compile_definitions(frank-cpc PRIVATE
     FLASH_MAX_FREQ_MHZ=${FLASH_SPEED}
     LSB_FIRST=1
     FRANK_CPC_VERSION=\"${FRANK_CPC_VERSION_STR}\"
-    SDCARD_PIN_SPI0_CS=5
-    SDCARD_PIN_SPI0_SCK=6
-    SDCARD_PIN_SPI0_MOSI=7
-    SDCARD_PIN_SPI0_MISO=4
+    SDCARD_PIN_SPI0_CS=${SD_CS}
+    SDCARD_PIN_SPI0_SCK=${SD_SCK}
+    SDCARD_PIN_SPI0_MOSI=${SD_MOSI}
+    SDCARD_PIN_SPI0_MISO=${SD_MISO}
 )
 
 if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
@@ -342,6 +400,12 @@ elseif(HDMI_DRIVER STREQUAL "VGA_HSTX")
 elseif(HDMI_DRIVER STREQUAL "COMPOSITE")
     target_compile_definitions(frank-cpc PRIVATE VIDEO_COMPOSITE=1)
     target_link_libraries(frank-cpc tv_driver)
+endif()
+
+# Z0: SD card pins are above GPIO 28 — requires SPI1 instead of SPI0
+if(PLATFORM STREQUAL "z0")
+    target_compile_definitions(frank-cpc PRIVATE SDCARD_SPI_BUS=spi1)
+    target_link_libraries(frank-cpc hardware_spi)
 endif()
 
 target_compile_options(frank-cpc PRIVATE
