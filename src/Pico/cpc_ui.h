@@ -13,8 +13,11 @@
 /* Call once during platform init to install UI palette entries. */
 void cpc_ui_init(void);
 
-/* True while the overlay is visible. */
+/* True while the overlay is visible (includes toast). */
 bool cpc_ui_is_visible(void);
+
+/* True when UI panels are open and should capture keyboard input. */
+bool cpc_ui_wants_keys(void);
 
 /* Toggle the settings overlay (mapped to F12). */
 void cpc_ui_toggle(void);

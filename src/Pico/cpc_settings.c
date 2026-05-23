@@ -132,7 +132,7 @@ const char *cpc_settings_label(cpc_setting_id_t id) {
         case CPC_SETTING_CUSTOMER: return "Customer";
         case CPC_SETTING_AUDIO_IN: return "Audio In";
         case CPC_SETTING_FAST_TAPE: return "Fast Tape";
-        case CPC_SETTING_STEREO:  return "Stereo";
+        case CPC_SETTING_STEREO:  return "Audio Output";
         case CPC_SETTING_ROM:      return "ROM";
         default: return "?";
     }

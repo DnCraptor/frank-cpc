@@ -47,8 +47,13 @@ typedef struct AYframe AYframe;
 typedef struct {
     int     cycle;         /* Current position in envelope (0-15, or 256/512 = held) */
     int     sign_10_14;    /* Direction for alternating shapes 10/14: +1 or -1 */
-    double  counter;       /* Sample counter for envelope period */
-    double  period;        /* Envelope period in samples */
+#ifdef PICO_BUILD
+    float   counter;       /* Sample counter for envelope period */
+    float   period;        /* Envelope period in samples */
+#else
+    double  counter;
+    double  period;
+#endif
     int     volume;        /* Current envelope output amplitude (0-15) */
     int     shape_written; /* Flag: non-zero once reg 13 has been written */
 } AYEnvelope;
@@ -60,10 +65,16 @@ extern  int     SoundOn;
 extern  int     sample_res;
 extern  int     sample_rate;
 extern  int     nb_samples;
+#ifdef PICO_BUILD
+extern  float   magic_number;
+extern  float   fq[4];
+extern  float   nsample[4];
+#else
 extern  double  magic_number;
-extern  int     note[4];
 extern  double  fq[4];
 extern  double  nsample[4];
+#endif
+extern  int     note[4];
 /* Use signed types for phase — ARM char is unsigned by default */
 extern  signed char    phase[4];
 extern  signed char    new_note[4];

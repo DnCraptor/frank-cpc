@@ -524,12 +524,12 @@ void cpc_ps2_feed_events(void) {
                 continue;
             }
             /* While overlay is open, route all keys to it */
-            if (cpc_ui_is_visible()) {
+            if (cpc_ui_wants_keys()) {
                 cpc_ui_handle_key(ks);
                 continue;
             }
         } else {
-            if (cpc_ui_is_visible()) continue;
+            if (cpc_ui_wants_keys()) continue;
         }
 
         /* Direct CPC keyboard matrix manipulation.

@@ -79,6 +79,10 @@ static int        s_disk_row         = 0;
 static int        s_disk_scroll      = 0;
 static char       s_disk_msg[64]     = "";
 
+/* Toast message — shown over the emulator screen for a few seconds */
+static char       s_toast[64]        = "";
+static int        s_toast_frames     = 0;   /* frames remaining */
+
 /* Dynamic row helpers (depend on s_disk_drive, so defined after state vars) */
 static bool disk_has_eject(void) {
     if (s_disk_drive < 2)
@@ -97,6 +101,11 @@ void cpc_ui_init(void) {
 }
 
 bool cpc_ui_is_visible(void) {
+    return s_state != UI_HIDDEN || s_toast_frames > 0;
+}
+
+/* Returns true when the UI has interactive panels open (not just a toast) */
+bool cpc_ui_wants_keys(void) {
     return s_state != UI_HIDDEN;
 }
 
@@ -334,14 +343,19 @@ static bool handle_disk_browser_key(unsigned int ks) {
                     if (cpc_is_tape_file(g_cpc_disk_entries[ei].name)) {
                         /* Tape file → mount as tape */
                         if (cpc_mount_tape(path) == 0) {
-                            s_state = UI_DISK_MENU;
+                            snprintf(s_toast, sizeof(s_toast), "Tape mounted");
+                            s_toast_frames = 100;
+                            s_state = UI_HIDDEN;
                         } else {
                             snprintf(s_disk_msg, sizeof(s_disk_msg), "Failed to load tape");
                         }
                     } else if (s_disk_drive < 2) {
                         /* DSK file → mount as disk */
                         if (cpc_mount_disk(s_disk_drive, path) == 0) {
-                            s_state = UI_DISK_MENU;
+                            snprintf(s_toast, sizeof(s_toast), "Drive %c: mounted",
+                                     'A' + s_disk_drive);
+                            s_toast_frames = 100;
+                            s_state = UI_HIDDEN;
                         } else {
                             snprintf(s_disk_msg, sizeof(s_disk_msg), "Failed to mount");
                         }
@@ -648,6 +662,17 @@ static void render_disk_browser(uint8_t *fb, int stride) {
 
 void cpc_ui_render(uint8_t *fb, int stride, int height) {
     (void)height;
+
+    /* Toast overlay — shown even when UI is hidden */
+    if (s_toast_frames > 0) {
+        --s_toast_frames;
+        int tw = (int)strlen(s_toast) * UI_CHAR_W + 12;
+        int tx = (stride - tw) / 2;
+        int ty = 4;
+        ui_fill_rect(fb, stride, tx, ty, tw, UI_LINE_H + 2, UI_COLOR_BG);
+        ui_draw_string(fb, stride, tx + 6, ty + 2, s_toast, UI_COLOR_ACCENT);
+    }
+
     if (s_state == UI_HIDDEN)           return;
     if (s_state == UI_SETTINGS)         render_settings_page(fb, stride);
     if (s_state == UI_SETTINGS_CONFIRM) render_settings_confirm(fb, stride);
