@@ -411,7 +411,7 @@ static void render_settings_page(uint8_t *fb, int stride) {
             /* Value right-aligned; chevrons < > around value on selected row */
             const char *val  = cpc_settings_value_label((cpc_setting_id_t)i);
             int         vlen = (int)strlen(val);
-            int         vx   = x + cw - 4 - (vlen + 2) * UI_CHAR_W;
+            int         vx   = x + cw - 3 - (vlen + 2) * UI_CHAR_W;
             if (sel) ui_draw_string(fb, stride, vx - UI_CHAR_W,          y + 1, "<", fg);
             ui_draw_string        (fb, stride, vx,                        y + 1, val, fg);
             if (sel) ui_draw_string(fb, stride, vx + vlen * UI_CHAR_W + 2, y + 1, ">", fg);
