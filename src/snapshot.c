@@ -177,7 +177,7 @@ int snapshot_save(const char *filename) {
      * bit 2: lower ROM disabled (1=RAM)
      * bit 3: upper ROM disabled (1=RAM)
      * bit 4: interrupt control (we store 0 here) */
-    header[0x2F + 17] = (byte)((ScreenMode & 3) |
+    header[0x2E + 17] = (byte)((ScreenMode & 3) |
                                 (LowerBlockIsRAM ? 4 : 0) |
                                 (UpperBlockIsRAM ? 8 : 0));
 
