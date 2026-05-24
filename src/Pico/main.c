@@ -262,7 +262,7 @@ void i2s_audio_drain(void) {
 /* HDMI_PIO: I2S audio ring buffer + Core 1 render loop. */
 #define AUDIO_SAMPLE_RATE       44100
 #define AUDIO_FRAMES_PER_CHUNK  882
-#define AUDIO_RING_FRAMES       (1u << 12)
+#define AUDIO_RING_FRAMES       (1u << 13)   /* 8192 frames — headroom for adaptive sync */
 #define AUDIO_RING_MASK         (AUDIO_RING_FRAMES - 1)
 
 static uint32_t __attribute__((aligned(4))) g_audio_ring[AUDIO_RING_FRAMES];
@@ -316,6 +316,10 @@ unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
 
 unsigned audio_ring_free(void) {
     return AUDIO_RING_FRAMES - (g_audio_prod - g_audio_cons);
+}
+
+unsigned audio_ring_avail(void) {
+    return g_audio_prod - g_audio_cons;
 }
 
 static volatile bool core1_ready = false;

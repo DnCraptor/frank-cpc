@@ -87,26 +87,37 @@ void cpc_frame_present(void) {
 static uint64_t g_next_frame_us = 0;
 #define FRAME_PERIOD_US 20000
 
+/* Audio-driven frame sync: pace emulation so the I2S ring buffer stays fed.
+ * Target: keep ring ~2 chunks (1764 frames) ahead.  If ring is getting empty,
+ * skip the wait so emulation runs full-speed to catch up.  If ring is healthy,
+ * wait the normal 20ms to avoid running ahead. */
+extern unsigned audio_ring_avail(void);
+
 void cpc_frame_sync(void) {
-    static uint32_t frame_skips = 0;
-
-    if (g_next_frame_us == 0)
-        g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
-
     if (g_cpc_settings.fast_tape && cpc_tape_is_loaded() && cpc_tape_get_motor()) {
         g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
         return;
     }
+
+    /* If audio ring has fewer than 2 chunks buffered, skip wait entirely
+     * to let emulation run as fast as possible and refill the ring. */
+    unsigned avail = audio_ring_avail();
+    if (avail < 882 * 2) {
+        g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
+        return;
+    }
+
+    /* Ring is healthy — sync to wall clock as normal */
+    if (g_next_frame_us == 0)
+        g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
 
     uint64_t now = time_us_64();
     if (now < g_next_frame_us) {
         while (time_us_64() < g_next_frame_us) tight_loop_contents();
         g_next_frame_us += FRAME_PERIOD_US;
     } else if (now - g_next_frame_us > 2 * FRAME_PERIOD_US) {
-        frame_skips++;
         g_next_frame_us = now + FRAME_PERIOD_US;
     } else {
-        frame_skips++;
         g_next_frame_us += FRAME_PERIOD_US;
     }
 }
