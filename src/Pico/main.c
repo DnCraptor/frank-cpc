@@ -260,9 +260,9 @@ void i2s_audio_drain(void) {
 
 #else
 /* HDMI_PIO: I2S audio ring buffer + Core 1 render loop. */
-#define AUDIO_SAMPLE_RATE       44100
-#define AUDIO_FRAMES_PER_CHUNK  882
-#define AUDIO_RING_FRAMES       (1u << 13)   /* 8192 frames = ~186ms headroom */
+#define AUDIO_SAMPLE_RATE       22050
+#define AUDIO_FRAMES_PER_CHUNK  441   /* one CPC frame of audio */
+#define AUDIO_RING_FRAMES       (1u << 13)   /* 8192 frames = ~372ms headroom */
 #define AUDIO_RING_MASK         (AUDIO_RING_FRAMES - 1)
 #define AUDIO_RING_TARGET       4096  /* target fill level (half ring) */
 
@@ -293,8 +293,8 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
         ensure_pwm_audio_initialized();
-        int16_t mono[882];
-        unsigned n = count > 882 ? 882 : count;
+        int16_t mono[441];
+        unsigned n = count > 441 ? 441 : count;
         for (unsigned i = 0; i < n; ++i)
             mono[i] = (int16_t)(((int32_t)samples[i*2] + (int32_t)samples[i*2+1]) >> 1);
         pwm_audio_push_samples(mono, (int)n);
@@ -305,36 +305,61 @@ unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     uint32_t fill = prod - cons;
     uint32_t free_slots = AUDIO_RING_FRAMES - fill;
 
-    /* Always-on stretch to compensate for emulation < 50fps.
-     * Duplicates 1-in-16 samples (~6.25% stretch).
-     * If ring overflows, normal (non-stretch) path drops excess. */
+    /* PSG produces at 44100Hz. We downsample 2:1 to ~22050Hz for I2S.
+     * Adaptive resampler compensates for FPS < 50 by stretching output.
+     * Step in 16.16 fixed-point over the 44100Hz input stream.
+     * At 47fps, need step ≈ 2*47/50*65536 = 122880 to produce
+     * 22050 output samples/sec from 41454 input samples/sec.
+     * Feedback adjusts step based on ring fill level. */
     if (count > 4) {
+        int32_t error = (int32_t)fill - (int32_t)AUDIO_RING_TARGET;
+        /* Baseline step: 2.0 in fixed-point = 131072 for pure 2:1 downsample.
+         * At 47fps we need ~6% more output, so baseline = 131072 * 47/50 ≈ 123008.
+         * Feedback: gain=4, gentle correction to avoid pitch wobble. */
+        int32_t step_i = 123008 + error * 4;
+        if (step_i > 131072) step_i = 131072;  /* never upsample past 2:1 */
+        if (step_i < 110000) step_i = 110000;  /* max ~19% stretch */
+        uint32_t step = (uint32_t)step_i;
+
+        uint32_t pos = 0;
         unsigned out = 0;
-        for (unsigned i = 0; i < count && out < free_slots; ++i) {
-            int16_t l = samples[i * 2];
-            int16_t r = samples[i * 2 + 1];
-            uint32_t packed = ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
-            g_audio_ring[(prod + out) & AUDIO_RING_MASK] = packed;
+        uint32_t max_pos = ((uint32_t)(count - 1)) << 16;
+
+        while (pos < max_pos && out < free_slots) {
+            uint32_t idx = pos >> 16;
+            uint32_t frac = (pos & 0xFFFF);
+
+            /* Linear interpolation on 44100Hz stereo input */
+            int16_t l0 = samples[idx * 2];
+            int16_t r0 = samples[idx * 2 + 1];
+            int16_t l1 = samples[(idx + 1) * 2];
+            int16_t r1 = samples[(idx + 1) * 2 + 1];
+
+            int16_t l = (int16_t)(l0 + (((int32_t)(l1 - l0) * (int32_t)frac) >> 16));
+            int16_t r = (int16_t)(r0 + (((int32_t)(r1 - r0) * (int32_t)frac) >> 16));
+
+            g_audio_ring[(prod + out) & AUDIO_RING_MASK] =
+                ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
             out++;
-            if ((i & 15) == 15 && out < free_slots) {
-                g_audio_ring[(prod + out) & AUDIO_RING_MASK] = packed;
-                out++;
-            }
+            pos += step;
         }
         __dmb();
         g_audio_prod = prod + out;
         return count;
     }
 
-    if (count > free_slots) count = free_slots;
-    for (unsigned i = 0; i < count; ++i) {
-        int16_t l = samples[i * 2];
-        int16_t r = samples[i * 2 + 1];
+    /* Small batches: simple 2:1 downsample */
+    unsigned out_count = count / 2;
+    if (out_count > free_slots) out_count = free_slots;
+    for (unsigned i = 0; i < out_count; ++i) {
+        unsigned j = i * 2;
+        int16_t l = (int16_t)(((int32_t)samples[j*2] + (int32_t)samples[(j+1)*2]) >> 1);
+        int16_t r = (int16_t)(((int32_t)samples[j*2+1] + (int32_t)samples[(j+1)*2+1]) >> 1);
         g_audio_ring[(prod + i) & AUDIO_RING_MASK] =
             ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
     }
     __dmb();
-    g_audio_prod = prod + count;
+    g_audio_prod = prod + out_count;
     return count;
 }
 
@@ -354,57 +379,39 @@ void __time_critical_func(render_core)(void) {
 
     static uint32_t __attribute__((aligned(32))) chunk[AUDIO_FRAMES_PER_CHUNK];
 
-    /* Pre-fill ring with silence — gives ~140ms headroom for jitter */
-    for (uint32_t i = 0; i < (AUDIO_RING_FRAMES * 3 / 4); ++i)
-        g_audio_ring[i] = 0;
-    g_audio_prod = AUDIO_RING_FRAMES * 3 / 4;
-
+    /* Don't pre-fill. Wait until emulation produces enough audio. */
     __dmb();
     core1_ready = true;
     __dmb();
 
-    static uint32_t last_sample = 0;  /* hold last sample for underrun fade */
+    /* Wait for emulator to fill ring before starting playback */
+    while ((g_audio_prod - g_audio_cons) < AUDIO_RING_TARGET) {
+        tight_loop_contents();
+    }
 
     while (true) {
         uint32_t prod = g_audio_prod;
+        __dmb();  /* ensure ring data is visible after reading prod */
         uint32_t cons = g_audio_cons;
         uint32_t avail = prod - cons;
 
         if (avail >= AUDIO_FRAMES_PER_CHUNK) {
             for (uint32_t i = 0; i < AUDIO_FRAMES_PER_CHUNK; ++i)
                 chunk[i] = g_audio_ring[(cons + i) & AUDIO_RING_MASK];
-            last_sample = chunk[AUDIO_FRAMES_PER_CHUNK - 1];
             __dmb();
             g_audio_cons = cons + AUDIO_FRAMES_PER_CHUNK;
         } else if (avail > 0) {
-            /* Partial read: play what's available, fade to zero */
+            /* Partial: play what's available, hold last sample for rest */
             for (uint32_t i = 0; i < avail; ++i)
                 chunk[i] = g_audio_ring[(cons + i) & AUDIO_RING_MASK];
-            last_sample = chunk[avail - 1];
-            /* Fade from last sample to zero over remaining frames */
-            int16_t fade_l = (int16_t)(last_sample & 0xFFFF);
-            int16_t fade_r = (int16_t)(last_sample >> 16);
-            uint32_t remain = AUDIO_FRAMES_PER_CHUNK - avail;
-            for (uint32_t i = 0; i < remain; ++i) {
-                int32_t frac = (int32_t)(remain - i);
-                int16_t l = (int16_t)(fade_l * frac / (int32_t)remain);
-                int16_t r = (int16_t)(fade_r * frac / (int32_t)remain);
-                chunk[avail + i] = ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
-            }
+            uint32_t hold = chunk[avail - 1];
+            for (uint32_t i = avail; i < AUDIO_FRAMES_PER_CHUNK; ++i)
+                chunk[i] = hold;
             __dmb();
             g_audio_cons = cons + avail;
-        } else {
-            /* Empty ring: fade from last sample to zero */
-            int16_t fade_l = (int16_t)(last_sample & 0xFFFF);
-            int16_t fade_r = (int16_t)(last_sample >> 16);
-            for (uint32_t i = 0; i < AUDIO_FRAMES_PER_CHUNK; ++i) {
-                int32_t frac = (int32_t)(AUDIO_FRAMES_PER_CHUNK - i);
-                int16_t l = (int16_t)(fade_l * frac / (int32_t)AUDIO_FRAMES_PER_CHUNK);
-                int16_t r = (int16_t)(fade_r * frac / (int32_t)AUDIO_FRAMES_PER_CHUNK);
-                chunk[i] = ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
-            }
-            last_sample = 0;
         }
+        /* else: empty ring — replay previous chunk (no change to chunk[]) */
+
         i2s_dma_write(&i2s_cfg, (const int16_t *)chunk);
     }
 }
@@ -540,7 +547,7 @@ int main(void) {
 
     multicore_launch_core1(render_core);
     while (!core1_ready) tight_loop_contents();
-    printf("I2S audio started (44100 Hz)\n");
+    printf("I2S audio started (%d Hz)\n", AUDIO_SAMPLE_RATE);
 #endif
 
     cpc_pico_main();
