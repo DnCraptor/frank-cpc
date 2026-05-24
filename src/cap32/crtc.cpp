@@ -824,10 +824,8 @@ prerender_and_render_normal_8bpp()
    const uint32_t *lut = active_halfwidth_lut;
    if (__builtin_expect(lut != nullptr, 1)) {
       byte *out = CPC.scr_pos;
-      uint32_t v0 = lut[bVidMem0];
-      uint32_t v1 = lut[bVidMem1];
-      memcpy(out, &v0, 4);
-      memcpy(out + 4, &v1, 4);
+      *(uint32_t *)out = lut[bVidMem0];
+      *(uint32_t *)(out + 4) = lut[bVidMem1];
       CPC.scr_pos = out + 8;
       return;
    }
@@ -848,14 +846,12 @@ prerender_and_render_normal_8bpp()
    byte b1 = palette_byte[(pens0 >> 16) & 0xFF];
    byte b2 = palette_byte[pens1 & 0xFF];
    byte b3 = palette_byte[(pens1 >> 16) & 0xFF];
-   uint32_t w0 = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
-   memcpy(out, &w0, 4);
+   *(uint32_t *)out = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
    byte b4 = palette_byte[pens2 & 0xFF];
    byte b5 = palette_byte[(pens2 >> 16) & 0xFF];
    byte b6 = palette_byte[pens3 & 0xFF];
    byte b7 = palette_byte[(pens3 >> 16) & 0xFF];
-   uint32_t w1 = b4 | (b5 << 8) | (b6 << 16) | (b7 << 24);
-   memcpy(out + 4, &w1, 4);
+   *(uint32_t *)(out + 4) = b4 | (b5 << 8) | (b6 << 16) | (b7 << 24);
    CPC.scr_pos = out + 8;
 }
 
@@ -881,7 +877,16 @@ void __attribute__((hot, section(".time_critical.crtc"))) crtc_cycle(int repeat_
                /* Write half-width border to scr_pos */
                byte *out = CPC.scr_pos;
                int half = bCount >> 1;
-               memset(out, borderColor, half);
+               /* Use word fills for speed */
+               uint32_t fill = borderColor | (borderColor << 8) |
+                  (borderColor << 16) | (borderColor << 24);
+               int w = 0;
+               for (; w + 3 < half; w += 4) {
+                  *(uint32_t *)(out + w) = fill;
+               }
+               for (; w < half; w++) {
+                  out[w] = borderColor;
+               }
                CPC.scr_pos = out + half;
             }
          }

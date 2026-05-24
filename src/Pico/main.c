@@ -260,11 +260,10 @@ void i2s_audio_drain(void) {
 
 #else
 /* HDMI_PIO: I2S audio ring buffer + Core 1 render loop. */
-#define AUDIO_SAMPLE_RATE       22050
-#define AUDIO_FRAMES_PER_CHUNK  441   /* one CPC frame of audio */
-#define AUDIO_RING_FRAMES       (1u << 13)   /* 8192 frames = ~372ms headroom */
+#define AUDIO_SAMPLE_RATE       44100
+#define AUDIO_FRAMES_PER_CHUNK  882
+#define AUDIO_RING_FRAMES       (1u << 12)
 #define AUDIO_RING_MASK         (AUDIO_RING_FRAMES - 1)
-#define AUDIO_RING_TARGET       4096  /* target fill level (half ring) */
 
 static uint32_t __attribute__((aligned(4))) g_audio_ring[AUDIO_RING_FRAMES];
 volatile uint32_t g_audio_prod = 0;
@@ -293,8 +292,8 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
         ensure_pwm_audio_initialized();
-        int16_t mono[441];
-        unsigned n = count > 441 ? 441 : count;
+        int16_t mono[882];
+        unsigned n = count > 882 ? 882 : count;
         for (unsigned i = 0; i < n; ++i)
             mono[i] = (int16_t)(((int32_t)samples[i*2] + (int32_t)samples[i*2+1]) >> 1);
         pwm_audio_push_samples(mono, (int)n);
@@ -302,68 +301,16 @@ unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
-    uint32_t fill = prod - cons;
-    uint32_t free_slots = AUDIO_RING_FRAMES - fill;
-
-    /* PSG produces at 44100Hz. We downsample to ~22050Hz for I2S.
-     * Adaptive resampler with feedback keeps ring at target fill level,
-     * automatically compensating for any FPS — no hardcoded ratio.
-     * Step is 16.16 fixed-point over the 44100Hz input stream.
-     * 131072 = 2.0 = pure 2:1 downsample (perfect at 50fps).
-     * When FPS < 50, ring drains → error < 0 → step decreases → more output. */
-    if (count > 4) {
-        int32_t error = (int32_t)fill - (int32_t)AUDIO_RING_TARGET;
-        /* PI controller: proportional + integral for zero steady-state error.
-         * I-term accumulates error to find the correct steady-state step.
-         * Pre-seed integrator for ~47fps: step_ss ≈ 123008 → I = (123008-131072)*32 */
-        static int32_t integrator = -258000;
-        integrator += error;
-        if (integrator > 100000) integrator = 100000;
-        if (integrator < -600000) integrator = -600000;
-        int32_t step_i = 131072 + error * 2 + integrator / 32;
-        if (step_i > 135000) step_i = 135000;  /* allow slight oversample */
-        if (step_i < 110000) step_i = 110000;  /* max ~19% stretch */
-        uint32_t step = (uint32_t)step_i;
-
-        uint32_t pos = 0;
-        unsigned out = 0;
-        uint32_t max_pos = ((uint32_t)(count - 1)) << 16;
-
-        while (pos < max_pos && out < free_slots) {
-            uint32_t idx = pos >> 16;
-            uint32_t frac = (pos & 0xFFFF);
-
-            /* Linear interpolation on 44100Hz stereo input */
-            int16_t l0 = samples[idx * 2];
-            int16_t r0 = samples[idx * 2 + 1];
-            int16_t l1 = samples[(idx + 1) * 2];
-            int16_t r1 = samples[(idx + 1) * 2 + 1];
-
-            int16_t l = (int16_t)(l0 + (((int32_t)(l1 - l0) * (int32_t)frac) >> 16));
-            int16_t r = (int16_t)(r0 + (((int32_t)(r1 - r0) * (int32_t)frac) >> 16));
-
-            g_audio_ring[(prod + out) & AUDIO_RING_MASK] =
-                ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
-            out++;
-            pos += step;
-        }
-        __dmb();
-        g_audio_prod = prod + out;
-        return count;
-    }
-
-    /* Small batches: simple 2:1 downsample */
-    unsigned out_count = count / 2;
-    if (out_count > free_slots) out_count = free_slots;
-    for (unsigned i = 0; i < out_count; ++i) {
-        unsigned j = i * 2;
-        int16_t l = (int16_t)(((int32_t)samples[j*2] + (int32_t)samples[(j+1)*2]) >> 1);
-        int16_t r = (int16_t)(((int32_t)samples[j*2+1] + (int32_t)samples[(j+1)*2+1]) >> 1);
+    uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
+    if (count > free_slots) count = free_slots;
+    for (unsigned i = 0; i < count; ++i) {
+        int16_t l = samples[i * 2];
+        int16_t r = samples[i * 2 + 1];
         g_audio_ring[(prod + i) & AUDIO_RING_MASK] =
             ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
     }
     __dmb();
-    g_audio_prod = prod + out_count;
+    g_audio_prod = prod + count;
     return count;
 }
 
@@ -378,24 +325,17 @@ void __time_critical_func(render_core)(void) {
     i2s_cfg = i2s_get_default_config();
     i2s_cfg.sample_freq     = AUDIO_SAMPLE_RATE;
     i2s_cfg.dma_trans_count = AUDIO_FRAMES_PER_CHUNK;
-    i2s_volume(&i2s_cfg, 0);
+    i2s_volume(&i2s_cfg, 0);   /* no extra shift; volume controlled in mix_notes */
     i2s_init(&i2s_cfg);
 
     static uint32_t __attribute__((aligned(32))) chunk[AUDIO_FRAMES_PER_CHUNK];
 
-    /* Don't pre-fill. Wait until emulation produces enough audio. */
     __dmb();
     core1_ready = true;
     __dmb();
 
-    /* Wait for emulator to fill ring before starting playback */
-    while ((g_audio_prod - g_audio_cons) < AUDIO_RING_TARGET) {
-        tight_loop_contents();
-    }
-
     while (true) {
         uint32_t prod = g_audio_prod;
-        __dmb();  /* ensure ring data is visible after reading prod */
         uint32_t cons = g_audio_cons;
         uint32_t avail = prod - cons;
 
@@ -404,18 +344,10 @@ void __time_critical_func(render_core)(void) {
                 chunk[i] = g_audio_ring[(cons + i) & AUDIO_RING_MASK];
             __dmb();
             g_audio_cons = cons + AUDIO_FRAMES_PER_CHUNK;
-        } else if (avail > 0) {
-            /* Partial: play what's available, hold last sample for rest */
-            for (uint32_t i = 0; i < avail; ++i)
-                chunk[i] = g_audio_ring[(cons + i) & AUDIO_RING_MASK];
-            uint32_t hold = chunk[avail - 1];
-            for (uint32_t i = avail; i < AUDIO_FRAMES_PER_CHUNK; ++i)
-                chunk[i] = hold;
-            __dmb();
-            g_audio_cons = cons + avail;
+        } else {
+            for (uint32_t i = 0; i < AUDIO_FRAMES_PER_CHUNK; ++i)
+                chunk[i] = 0;
         }
-        /* else: empty ring — replay previous chunk (no change to chunk[]) */
-
         i2s_dma_write(&i2s_cfg, (const int16_t *)chunk);
     }
 }
@@ -551,7 +483,7 @@ int main(void) {
 
     multicore_launch_core1(render_core);
     while (!core1_ready) tight_loop_contents();
-    printf("I2S audio started (%d Hz)\n", AUDIO_SAMPLE_RATE);
+    printf("I2S audio started (44100 Hz)\n");
 #endif
 
     cpc_pico_main();

@@ -512,10 +512,10 @@ void cpc_engine_run_frame(void) {
     accum_z80_us += absolute_time_diff_us(t0, t1);
     profile_counter++;
     if (profile_counter >= 50) {
-        extern unsigned audio_ring_free(void);
-        unsigned ring_free = audio_ring_free();
-        printf("PROFILE: frame=%llu us, snd=%d, ring_free=%u\n",
-               accum_z80_us / 50, snd_buf_count, ring_free);
+        printf("PROFILE: frame=%llu us, snd_bufs=%d, snd_en=%d, bufptr_off=%d\n",
+               accum_z80_us / 50, snd_buf_count,
+               (int)CPC.snd_enabled,
+               (int)(CPC.snd_bufferptr - pbSndBuffer));
         accum_z80_us = 0;
         profile_counter = 0;
         snd_buf_count = 0;
