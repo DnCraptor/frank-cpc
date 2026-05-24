@@ -218,3 +218,12 @@ unsigned audio_ring_free(void) {
         return i2s_ring_free();
     return frank_hdmi_audio_free();
 }
+
+unsigned audio_ring_avail(void) {
+    if (SELECT_VGA) {
+        extern volatile uint32_t g_audio_prod, g_audio_cons;
+        return g_audio_prod - g_audio_cons;
+    }
+    /* HDMI ring: total size minus free = in-use frames */
+    return 2048 - frank_hdmi_audio_free();
+}
