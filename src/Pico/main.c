@@ -61,8 +61,6 @@ static uint8_t __attribute__((aligned(4))) screen_mem[2][FB_W * CPC_SCREEN_LINES
 uint8_t *SCREEN[2] = { screen_mem[0], screen_mem[1] };
 volatile uint32_t current_buffer = 1;  /* Start at 1: SCREEN[0] is the initial display buffer */
 
-uint8_t cpc_fb[FB_H][FB_W];
-
 static FATFS g_fs;
 
 static void __no_inline_not_in_flash_func(set_flash_timings)(int cpu_mhz, int flash_max_mhz) {
@@ -395,7 +393,6 @@ int main(void) {
     printf("PSRAM initialized\n");
 
     memset(screen_mem, 0, sizeof(screen_mem));
-    memset(cpc_fb, 0, sizeof(cpc_fb));
 
 #if defined(VGA_HSTX)
     /* VGA_HSTX: bring DispHSTX up FIRST (before SD + PS/2) so the VGA

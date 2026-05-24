@@ -233,6 +233,8 @@ typedef struct {
    unsigned int hend;
    void (*CharInstMR)();
    void (*CharInstSL)();
+   unsigned char charInstMR_state; // 0=NoChar, 1=CharMR1, 2=CharMR2
+   unsigned char charInstSL_state; // 0=NoChar, 1=CharSL1, 2=CharSL2
    unsigned char reg_select;
    unsigned char registers[18];
    unsigned int split_addr;

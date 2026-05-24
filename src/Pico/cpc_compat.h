@@ -9,8 +9,6 @@
 #include <stdint.h>
 #include "board_config.h"
 
-extern uint8_t cpc_fb[CPC_FB_HEIGHT][CPC_FB_WIDTH];
-
 /* Platform hook declarations */
 void cpc_init_palette(void);
 void cpc_ps2_feed_events(void);

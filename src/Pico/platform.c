@@ -32,7 +32,6 @@
 
 extern uint8_t *SCREEN[2];
 extern volatile uint32_t current_buffer;
-extern uint8_t cpc_fb[CPC_FB_HEIGHT][CPC_FB_WIDTH];
 
 void cpc_init_palette(void) {
     uint32_t rgb[32];
@@ -44,25 +43,13 @@ void cpc_init_palette(void) {
 
 void cpc_frame_present(void) {
 #if !defined(VGA_HSTX) && !defined(VIDEO_COMPOSITE)
-    /* VGA tearing prevention: wait until the VGA ISR has consumed the
-     * previous pending buffer (at VSync) before we start overwriting the
-     * back buffer.  Without this, the emulator can write to the buffer
-     * the ISR is still scanning out, causing visible tearing.
-     * In HDMI mode the VGA ISR doesn't run so pending_vga_fb is never
-     * consumed — skip the wait to avoid hanging. */
     {
         extern bool SELECT_VGA;
         extern uint8_t * volatile pending_vga_fb;
         if (SELECT_VGA) {
-            /* Wait until the VGA ISR has consumed the previous pending
-             * buffer at VSync.  Timeout after ~17ms (one VGA frame). */
             for (int i = 0; i < 4000000 && pending_vga_fb; i++)
                 tight_loop_contents();
             if (pending_vga_fb) {
-                /* VSync didn't fire in time — the previous buffer swap
-                 * was never consumed.  If we proceed, we'd write to the
-                 * buffer the ISR is currently scanning out (tearing).
-                 * Skip this frame presentation entirely. */
                 return;
             }
         }
@@ -84,8 +71,9 @@ void cpc_frame_present(void) {
     const int top_pad = (CPC_SCREEN_LINES - CPC_FB_HEIGHT) / 2;
     uint8_t *dst = SCREEN[current_buffer];
 
+    /* Scanlines were rendered directly into dst + top_pad*stride by the
+     * scanline callback.  Just fill the border rows. */
     memset(dst, border, (size_t)(CPC_FB_WIDTH * top_pad));
-    memcpy(dst + CPC_FB_WIDTH * top_pad, cpc_fb, CPC_FB_WIDTH * CPC_FB_HEIGHT);
     memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
            (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
 
@@ -583,6 +571,19 @@ void cpc_pico_main(void) {
         cpc_ps2_feed_events();
         cpc_nespad_poll();
         cpc_autotype_tick();
+
+        /* Point scanline callback directly at the back screen buffer,
+         * skipping the intermediate cpc_fb and the memcpy in present. */
+        {
+            const int top_pad = (CPC_SCREEN_LINES - CPC_FB_HEIGHT) / 2;
+            uint8_t *back = SCREEN[current_buffer];
+            /* Only clear top/bottom border regions (CRTC fills active area) */
+            uint8_t border = cpc_get_border_ink();
+            memset(back, border, (size_t)(CPC_FB_WIDTH * 16));
+            memset(back + CPC_FB_WIDTH * (CPC_SCREEN_LINES - 16), border, (size_t)(CPC_FB_WIDTH * 16));
+            cpc_set_render_target(back + CPC_FB_WIDTH * top_pad, CPC_FB_WIDTH);
+        }
+
         cpc_engine_run_frame();
         cpc_frame_present();
         cpc_frame_sync();

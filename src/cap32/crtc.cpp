@@ -47,6 +47,13 @@ extern FILE *pfoDebug;
 
 #define MAX_DRAWN 270 // Max displayed scan line (+1)
 
+/* Visible framebuffer range — set by adapter, used to skip rendering off-screen lines */
+int crtc_fb_y_start = 21; // tuned to center typical CPC display in 240 lines
+#ifndef CPC_FB_HEIGHT
+#define CPC_FB_HEIGHT 240
+#endif
+static int scrln_visible = 0; /* cached: is current scanline in visible range? */
+
 #define MIN_VHOLD 250
 #define MAX_VHOLD 380
 #define MID_VHOLD 295
@@ -71,7 +78,90 @@ byte RendBuff[800];
 byte *RendWid, *RendOut;
 dword *RendStart, *RendPos;
 
-word *MAXlate = nullptr; // allocated in PSRAM (0x7400 entries = ~58KB)
+/* Pre-computed next char_count that triggers a state machine event.
+ * When char_count < next_event_char AND !flags1.inHSYNC AND
+ * !CRTC.charInstSL_state AND !CRTC.charInstMR_state,
+ * we can skip all char_count comparisons. */
+static byte next_event_char;
+
+static inline void recompute_next_event() {
+   /* Find the smallest register value among hstart, hend, reg[0], reg[1], reg[2] */
+   byte cc = CRTC.char_count;
+   byte best = CRTC.registers[0]; /* horizontal total — always the largest */
+   /* Check each event point; pick the smallest one > char_count */
+   byte r1 = CRTC.registers[1];
+   byte r2 = CRTC.registers[2];
+   byte hs = CRTC.hstart;
+   byte he = CRTC.hend;
+   
+   /* Start with reg[0] (always valid, largest possible) */
+   if (r1 > cc && r1 < best) best = r1;
+   if (r2 > cc && r2 < best) best = r2;
+   if (hs > cc && hs < best) best = hs;
+   if (he > cc && he < best) best = he;
+   next_event_char = best;
+}
+
+void crtc_recompute_next_event() { recompute_next_event(); }
+
+/* MAXlate removed — computed inline in crtc_cycle() */
+
+/* Byte-sized palette cache for fast render lookups.
+ * GateArray.palette[] is uint32 but values are 0-31; this avoids
+ * dword-indexed loads in the hot render loop. */
+byte palette_byte[34] __attribute__((aligned(4), section(".time_critical.crtc_data")));
+
+/* Half-width lookup for Mode 1: video byte → 4 palette-mapped half-width pixels.
+ * Rebuilt when palette changes. Indexed by video byte value (0-255).
+ * Each entry is a dword: bytes [pixel0, pixel2, pixel4, pixel6] with palette applied. */
+uint32_t mode1_halfwidth_lut[256] __attribute__((aligned(4), section(".time_critical.crtc_data")));
+
+/* Half-width lookup for Mode 0: video byte → 4 palette-mapped half-width pixels.
+ * Mode 0 has 2 pixels per byte; each pixel appears twice in half-width output. */
+uint32_t mode0_halfwidth_lut[256] __attribute__((aligned(4), section(".time_critical.crtc_data")));
+
+/* Active half-width LUT pointer — set to mode0 or mode1 LUT on mode change.
+ * NULL for modes 2/3 (fall back to generic path). */
+uint32_t *active_halfwidth_lut __attribute__((section(".time_critical.crtc_data"))) = nullptr;
+
+void crtc_update_palette_cache()
+{
+   for (int i = 0; i < 34; i++) {
+      palette_byte[i] = (byte)GateArray.palette[i];
+   }
+   /* Rebuild Mode 1 half-width LUT: for each video byte, precompute 4 half-width
+    * palette bytes (pixels 0-3, each taken once instead of doubled).
+    * CPC Mode 1 bit decode (note: MSB of pen comes from LOW bit position):
+    *   pen0 = bit3*2 + bit7, pen1 = bit2*2 + bit6,
+    *   pen2 = bit1*2 + bit5, pen3 = bit0*2 + bit4 */
+   for (int b = 0; b < 256; b++) {
+      byte pen0 = ((b >> 2) & 2) | ((b >> 7) & 1);
+      byte pen1 = ((b >> 1) & 2) | ((b >> 6) & 1);
+      byte pen2 = ((b >> 0) & 2) | ((b >> 5) & 1);
+      byte pen3 = ((b << 1) & 2) | ((b >> 4) & 1);
+      mode1_halfwidth_lut[b] = palette_byte[pen0] |
+         (palette_byte[pen1] << 8) |
+         (palette_byte[pen2] << 16) |
+         (palette_byte[pen3] << 24);
+   }
+   /* Rebuild Mode 0 half-width LUT: for each video byte, precompute 4 half-width
+    * palette bytes. Mode 0 has 2 pixels/byte, each doubled in half-width.
+    * CPC Mode 0 bit decode (verified against M0Map):
+    *   pen0 = b1*8 + b5*4 + b3*2 + b7, pen1 = b0*8 + b4*4 + b2*2 + b6 */
+   for (int b = 0; b < 256; b++) {
+      byte pen0 = ((b << 2) & 8) | ((b >> 3) & 4) | ((b >> 2) & 2) | ((b >> 7) & 1);
+      byte pen1 = ((b << 3) & 8) | ((b >> 2) & 4) | ((b >> 1) & 2) | ((b >> 6) & 1);
+      byte p0 = palette_byte[pen0];
+      byte p1 = palette_byte[pen1];
+      mode0_halfwidth_lut[b] = p0 | (p0 << 8) | (p1 << 16) | (p1 << 24);
+   }
+   /* Update active LUT pointer based on current mode */
+   switch (GateArray.scr_mode) {
+      case 0: active_halfwidth_lut = mode0_halfwidth_lut; break;
+      case 1: active_halfwidth_lut = mode1_halfwidth_lut; break;
+      default: active_halfwidth_lut = nullptr; break;
+   }
+}
 
 void (*PreRender)();
 
@@ -353,6 +443,7 @@ void update_skew()
    } else {
       CRTC.hstart = skew; // position at which horizontal display starts
       CRTC.hend = CRTC.hstart + CRTC.registers[1]; // position at which it ends
+      recompute_next_event();
    }
 }
 
@@ -363,6 +454,12 @@ inline void change_mode()
       CRTC.flag_hadhsync = 0;
       GateArray.scr_mode = GateArray.requested_scr_mode; // execute mode change
       ModeMap = ModeMaps[GateArray.scr_mode]; // update ModeMap pointer
+      /* Update active LUT pointer for the new mode */
+      switch (GateArray.scr_mode) {
+         case 0: active_halfwidth_lut = mode0_halfwidth_lut; break;
+         case 1: active_halfwidth_lut = mode1_halfwidth_lut; break;
+         default: active_halfwidth_lut = nullptr; break;
+      }
    }
 }
 
@@ -564,12 +661,14 @@ void CharSL2()
 {
    CRTC.reg5 = CRTC.registers[5];
    CRTC.CharInstSL = NoChar;
+   CRTC.charInstSL_state = 0;
 }
 
 
 void CharSL1()
 {
    CRTC.CharInstSL = CharSL2;
+   CRTC.charInstSL_state = 2;
 }
 
 
@@ -583,6 +682,7 @@ void CharMR2()
       }
    }
    CRTC.CharInstMR = NoChar;
+   CRTC.charInstMR_state = 0;
 }
 
 
@@ -595,6 +695,7 @@ void CharMR1()
       CRTC.flag_startvta = 0; // not yet at end of frame
    }
    CRTC.CharInstMR = CharMR2;
+   CRTC.charInstMR_state = 2;
 }
 
 
@@ -604,10 +705,11 @@ void frame_finished()
    VDU.scrln = -(((VDU.scanline - MIN_VHOLD) + 1) >> 1);
    VDU.scanline = 0;
    VDU.flag_drawing = 0;
+   scrln_visible = 0;
 }
 
 
-void prerender_border()
+void __attribute__((section(".time_critical.crtc"))) prerender_border()
 {
    dword dwVal = 0x10101010;
    *RendPos = dwVal;
@@ -618,7 +720,7 @@ void prerender_border()
 }
 
 
-void prerender_sync()
+void __attribute__((section(".time_critical.crtc"))) prerender_sync()
 {
    dword dwVal = 0x11111111;
    *RendPos = dwVal;
@@ -629,19 +731,34 @@ void prerender_sync()
 }
 
 
+/* Shadow RAM and fast read banks for SRAM access */
+extern byte ram_shadow[];
+extern byte *membank_read_fast[];
+
 static inline byte getRAMByte(int video_address) {
+   /* Video RAM is always in lower 64KB — read from shadow */
+   if ((unsigned)video_address < 65536u)
+      return ram_shadow[video_address];
    return *(pbRAM + video_address);
 }
 
+static inline word __attribute__((always_inline)) getRAMWord(int video_address) {
+   if (__builtin_expect((unsigned)video_address < 65534u, 1))
+      return *reinterpret_cast<const word *>(ram_shadow + video_address);
+   return *reinterpret_cast<const word *>(pbRAM + video_address);
+}
 
-void prerender_normal()
+
+void __attribute__((section(".time_critical.crtc"))) prerender_normal()
 {
-   byte bVidMem = getRAMByte(CRTC.next_address);
-   *RendPos = *(ModeMap + (bVidMem * 2));
-   *(RendPos + 1) = *(ModeMap + (bVidMem * 2) + 1);
-   bVidMem = getRAMByte(CRTC.next_address + 1);
-   *(RendPos + 2) = *(ModeMap + (bVidMem * 2));
-   *(RendPos + 3) = *(ModeMap + (bVidMem * 2) + 1);
+   /* Read both video bytes in one 16-bit PSRAM access instead of two 8-bit */
+   word wVidMem = getRAMWord(CRTC.next_address);
+   byte bVidMem0 = (byte)(wVidMem);
+   byte bVidMem1 = (byte)(wVidMem >> 8);
+   *RendPos = *(ModeMap + (bVidMem0 * 2));
+   *(RendPos + 1) = *(ModeMap + (bVidMem0 * 2) + 1);
+   *(RendPos + 2) = *(ModeMap + (bVidMem1 * 2));
+   *(RendPos + 3) = *(ModeMap + (bVidMem1 * 2) + 1);
    RendPos += 4;
 }
 
@@ -667,29 +784,120 @@ static inline __attribute__((always_inline)) unsigned int getPixel()
 }
 
 
-void render8bpp()
+void __attribute__((section(".time_critical.crtc"))) render8bpp()
 {
+   /* Half-width render: write every other pixel through byte palette */
    byte bCount = *RendWid++;
-   while (bCount--) {
-      byte val = getPixel();
-      *CPC.scr_pos++ = val;
+   const byte *rend = RendOut;
+   RendOut += bCount;
+   byte *out = CPC.scr_pos;
+   int half = bCount >> 1;
+   int i = 0;
+   for (; i + 3 < half; i += 4) {
+      out[0] = palette_byte[rend[0]];
+      out[1] = palette_byte[rend[2]];
+      out[2] = palette_byte[rend[4]];
+      out[3] = palette_byte[rend[6]];
+      out += 4;
+      rend += 8;
    }
+   for (; i < half; i++) {
+      *out++ = palette_byte[*rend];
+      rend += 2;
+   }
+   CPC.scr_pos = out;
 }
 
 
-void crtc_cycle(int repeat_count)
+/* Combined prerender + render for the common case (normal display, 8bpp).
+ * Reads video RAM, decodes through ModeMap, writes half-width output
+ * directly to scr_pos using the byte palette cache — no RendBuff round-trip. */
+static inline void __attribute__((always_inline, section(".time_critical.crtc")))
+prerender_and_render_normal_8bpp()
 {
-   while (repeat_count) {
-      if (VDU.flag_drawing) { // are we within the rendering area?
-         if (HorzChar < HorzMax) { // below horizontal cut-off?
-            if (flags1.combined != LastPreRend) {
+   word wVidMem = getRAMWord(CRTC.next_address);
+   byte bVidMem0 = (byte)(wVidMem);
+   byte bVidMem1 = (byte)(wVidMem >> 8);
+   
+   /* Fast path for modes 0/1: use precomputed LUT (2 dword stores).
+    * Skip RendPos/RendWid/RendOut — they're reset at scanline start anyway. */
+   const uint32_t *lut = active_halfwidth_lut;
+   if (__builtin_expect(lut != nullptr, 1)) {
+      byte *out = CPC.scr_pos;
+      *(uint32_t *)out = lut[bVidMem0];
+      *(uint32_t *)(out + 4) = lut[bVidMem1];
+      CPC.scr_pos = out + 8;
+      return;
+   }
+   
+   /* Generic path: advance RendPos/RendWid/RendOut + ModeMap decode */
+   RendPos += 4;
+   byte bCount = *RendWid++;
+   RendOut += bCount;
+   const dword *map0 = ModeMap + (bVidMem0 * 2);
+   const dword *map1 = ModeMap + (bVidMem1 * 2);
+   dword pens0 = map0[0];
+   dword pens1 = map0[1];
+   dword pens2 = map1[0];
+   dword pens3 = map1[1];
+   
+   byte *out = CPC.scr_pos;
+   byte b0 = palette_byte[pens0 & 0xFF];
+   byte b1 = palette_byte[(pens0 >> 16) & 0xFF];
+   byte b2 = palette_byte[pens1 & 0xFF];
+   byte b3 = palette_byte[(pens1 >> 16) & 0xFF];
+   *(uint32_t *)out = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+   byte b4 = palette_byte[pens2 & 0xFF];
+   byte b5 = palette_byte[(pens2 >> 16) & 0xFF];
+   byte b6 = palette_byte[pens3 & 0xFF];
+   byte b7 = palette_byte[(pens3 >> 16) & 0xFF];
+   *(uint32_t *)(out + 4) = b4 | (b5 << 8) | (b6 << 16) | (b7 << 24);
+   CPC.scr_pos = out + 8;
+}
+
+void __attribute__((hot, section(".time_critical.crtc"))) crtc_cycle(int repeat_count)
+{
+   do {
+      if (scrln_visible) { // visible scanline?
+         if (HorzChar < HorzMax) {
+            if (__builtin_expect(flags1.combined != LastPreRend, 0)) {
                set_prerender(); // change pre-renderer if necessary
             }
-            PreRender(); // translate CPC video memory bytes to entries referencing the palette
-            CPC.scr_render(); // render to the video surface at the current bit depth
+            /* Fast path: if in normal display mode, use combined prerender+render */
+            if (__builtin_expect(LastPreRend == 0x03ff0000, 1)) {
+               prerender_and_render_normal_8bpp();
+            } else {
+               /* Border/sync path: write border color directly, skip RendBuff round-trip */
+               byte borderColor = (static_cast<word>(LastPreRend) == 0) ?
+                  palette_byte[16] : palette_byte[17]; /* 16=border, 17=sync */
+               byte bCount = *RendWid++;
+               RendOut += bCount;
+               /* Advance RendPos to keep in sync (4 dwords = 16 bytes) */
+               RendPos += 4;
+               /* Write half-width border to scr_pos */
+               byte *out = CPC.scr_pos;
+               int half = bCount >> 1;
+               /* Use word fills for speed */
+               uint32_t fill = borderColor | (borderColor << 8) |
+                  (borderColor << 16) | (borderColor << 24);
+               int w = 0;
+               for (; w + 3 < half; w += 4) {
+                  *(uint32_t *)(out + w) = fill;
+               }
+               for (; w < half; w++) {
+                  out[w] = borderColor;
+               }
+               CPC.scr_pos = out + half;
+            }
          }
       }
-      CRTC.next_address = MAXlate[(CRTC.addr + CRTC.char_count) & 0x73ff] | CRTC.scr_base; // next address for PreRender
+      /* Compute MAXlate inline — prepares next_address for the NEXT iteration's render.
+       * Must run every iteration to maintain correct timing. */
+      {
+         unsigned int idx = (CRTC.addr + CRTC.char_count) & 0x73ff;
+         unsigned int j = idx << 1;
+         CRTC.next_address = ((j & 0x7FE) | ((j & 0x6000) << 1)) | CRTC.scr_base;
+      }
       flags1.dt.combined = new_dt.combined; // update the DISPTMG flags
 
       #ifdef DEBUG_CRTC
@@ -765,11 +973,11 @@ void crtc_cycle(int repeat_count)
       iMonHSPeakPos += 0x100;
       HorzPos += 0x100;
       HorzChar++;
-      if (HorzPos >= MonHSYNC) {
+      if (__builtin_expect(HorzPos >= MonHSYNC, 0)) {
          if (VDU.flag_drawing) {
-            /* Notify adapter that a scanline is complete */
-            if (CPC.scr_line_complete) {
-               CPC.scr_line_complete(VDU.scrln);
+            if (scrln_visible) {
+               extern void scanline_complete(int scrln);
+               scanline_complete(VDU.scrln);
             }
             CPC.scr_base += CPC.scr_line_offs; // advance surface pointer to next row
          }
@@ -801,12 +1009,29 @@ void crtc_cycle(int repeat_count)
          VDU.scanline++;
          if (static_cast<dword>(VDU.scrln) >= MAX_DRAWN) {
             VDU.flag_drawing = 0;
+            scrln_visible = 0;
          } else {
             VDU.flag_drawing = 1;
+            int fy = VDU.scrln - crtc_fb_y_start;
+            scrln_visible = ((unsigned)fy < (unsigned)CPC_FB_HEIGHT);
          }
       }
 
 // ----------------------------------------------------------------------------
+
+      /* Fast path: if char_count+1 won't hit any event, skip all comparisons. */
+      {
+         byte next_cc = (CRTC.char_count + 1) & 255;
+         if (__builtin_expect(
+               next_cc != CRTC.registers[0] &&
+               next_cc < next_event_char &&
+               !flags1.inHSYNC &&
+               CRTC.charInstSL_state == 0 &&
+               CRTC.charInstMR_state == 0, 1)) {
+            CRTC.char_count = next_cc;
+            goto crtc_bottom;
+         }
+      }
 
       if (CRTC.char_count == CRTC.registers[0]) { // matches horizontal total?
          CRTC.last_hend = CRTC.char_count; // preserve current line length in chars
@@ -857,10 +1082,12 @@ void crtc_cycle(int repeat_count)
          match_hsw();
       }
 
-      CRTC.CharInstSL(); // if necessary, process vertical total delay
-      CRTC.CharInstMR(); // if necessary, process maximum raster count delay
+      if (__builtin_expect(CRTC.charInstSL_state != 0, 0))
+         CRTC.CharInstSL(); // if necessary, process vertical total delay
+      if (__builtin_expect(CRTC.charInstMR_state != 0, 0))
+         CRTC.CharInstMR(); // if necessary, process maximum raster count delay
 
-      if (CRTC.flag_newscan) { // scanline change requested?
+      if (__builtin_expect(CRTC.flag_newscan, 0)) { // scanline change requested?
          CRTC.flag_newscan = 0;
          CRTC.addr = CRTC.next_addr;
          CRTC.sl_count++;
@@ -892,6 +1119,7 @@ void crtc_cycle(int repeat_count)
          }
 
          CRTC.CharInstSL = CharSL1;
+         CRTC.charInstSL_state = 1;
 
          dword temp = 0;
          if (CRTC.raster_count == CRTC.registers[9]) { // matches maximum raster address?
@@ -903,6 +1131,7 @@ void crtc_cycle(int repeat_count)
          }
          if (temp) {
             CRTC.CharInstMR = CharMR1;
+            CRTC.charInstMR_state = 1;
          }
 
          if (CRTC.flag_invta) { // in vertical total adjust?
@@ -943,25 +1172,18 @@ void crtc_cycle(int repeat_count)
       if (CRTC.char_count == CRTC.hend) { // entering border area?
          new_dt.NewHDSPTIMG &= 0xfe;
       }
+      recompute_next_event();
+crtc_bottom:
 
 // ----------------------------------------------------------------------------
 
       repeat_count--;
-   }
+   } while (__builtin_expect(repeat_count > 0, 0));
 }
 
 
 void crtc_init()
 {
-   /* Allocate MAXlate in PSRAM (~58KB) */
-   if (!MAXlate) {
-      MAXlate = (word *)psram_malloc(0x7400 * sizeof(word));
-      if (!MAXlate) {
-         printf("crtc_init: PSRAM alloc MAXlate failed\n");
-         return;
-      }
-   }
-
    dwXScale = 1;
    ModeMaps[0] = M0Map;
    ModeMaps[1] = M1Map;
@@ -973,11 +1195,6 @@ void crtc_init()
    CPC.scr_prerendernorm = prerender_normal;
    CPC.scr_prerenderbord = prerender_border;
    CPC.scr_prerendersync = prerender_sync;
-
-   for (int l = 0; l < 0x7400; l++) {
-      int j = l << 1; // actual address
-      MAXlate[l] = (j & 0x7FE) | ((j & 0x6000) << 1);
-   }
 
    PosShift = 4;
    for (int i = 0; i < 48; i++) {
@@ -1014,6 +1231,8 @@ void crtc_reset()
    new_dt.NewHDSPTIMG = 0x03;
    CRTC.CharInstSL = NoChar;
    CRTC.CharInstMR = NoChar;
+   CRTC.charInstSL_state = 0;
+   CRTC.charInstMR_state = 0;
    CRTC.split_addr = 0;
    CRTC.split_sl = 0;
    CRTC.sl_count = 0;
@@ -1023,4 +1242,5 @@ void crtc_reset()
    MaxVSync = MinVSync + MIN_VHOLD_RANGE +
       (((MinVSync - MIN_VHOLD) * (MAX_VHOLD_RANGE - MIN_VHOLD_RANGE)) +
       (MAX_VHOLD - MIN_VHOLD) - 1) / (MAX_VHOLD - MIN_VHOLD);
+   next_event_char = 0; /* force full state machine on first iteration */
 }

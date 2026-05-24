@@ -405,7 +405,7 @@ if(PLATFORM STREQUAL "z0")
 endif()
 
 target_compile_options(frank-cpc PRIVATE
-    -O2
+    -O3
     -fno-strict-aliasing
     -Wno-unused-parameter
     -Wno-unused-variable
@@ -418,7 +418,7 @@ target_compile_options(frank-cpc PRIVATE
     -Wno-incompatible-pointer-types
 )
 
-# Hot engine files get -O3 for maximum performance
+# Hot engine files already get -O3 from global setting
 set_source_files_properties(
     src/cap32/z80.cpp
     src/cap32/crtc.cpp

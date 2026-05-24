@@ -70,4 +70,9 @@ void render24bpp_doubleY();
 void render32bpp();
 void render32bpp_doubleY();
 
+extern int crtc_fb_y_start;
+extern byte palette_byte[34];
+void crtc_update_palette_cache();
+void crtc_recompute_next_event();
+
 #endif

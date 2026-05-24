@@ -24,6 +24,11 @@ void cpc_engine_reset(void);
 /* Run one 20ms frame (~80000 Z80 cycles). Renders into cpc_fb[][]. */
 void cpc_engine_run_frame(void);
 
+/* Set direct render target for scanline callback.
+ * If set, scanlines are written here instead of cpc_fb.
+ * Pass NULL to revert to cpc_fb. */
+void cpc_set_render_target(uint8_t *buffer, int stride);
+
 /* Keyboard matrix: press/release a key in the CPC matrix.
  * row = 0..9, bit = 0..7.  Active-low: press clears, release sets. */
 void cpc_key_matrix_set(int row, int bit, int pressed);

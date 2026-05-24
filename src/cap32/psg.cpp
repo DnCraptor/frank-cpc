@@ -447,7 +447,7 @@ inline void Synthesizer_Mixer_Q()
 
 
 
-void Synthesizer_Stereo16()
+void __attribute__((section(".time_critical.psg"))) Synthesizer_Stereo16()
 {
    int Tick_Counter = 0;
    while (LoopCount.Hi) {

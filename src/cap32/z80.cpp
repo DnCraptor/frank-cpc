@@ -38,11 +38,14 @@ extern t_GateArray GateArray;
 extern t_PSG PSG;
 extern t_VDU VDU;
 extern byte *membank_read[4], *membank_write[4];
+byte *membank_read_fast[4]; /* always SRAM: shadow for lower 64KB RAM, direct for ROM */
+extern byte *pbRAM;
 
 extern int iTapeCycleCount;
 extern void Tape_UpdateLevel();
 extern byte fdc_read_data();
 extern void fdc_write_data(byte val);
+extern void Synthesizer_Stereo16();
 
 enum {
    FDC_TO_CPU = 0,
@@ -159,6 +162,7 @@ enum EDcodes {
 
 t_z80regs z80;
 int iCycleCount, iWSAdjust;
+int iCrtcCycleAccum = 0;
 static byte SZ[256]; // zero and sign flags
 static byte SZ_BIT[256]; // zero, sign and parity/overflow (=zero) flags for BIT opcode
 static byte SZP[256]; // zero, sign and parity flags
@@ -324,16 +328,28 @@ static byte cc_ex[256] = {
 
 
 
+/* Shadow copy of lower 64KB CPC RAM in internal SRAM.
+ * read_mem reads from here (fast), write_mem writes to both shadow + PSRAM.
+ * This eliminates PSRAM latency on Z80 opcode fetches. */
+byte ram_shadow[65536] __attribute__((aligned(4)));
+
 inline byte read_mem_no_watchpoint(word addr) {
-  return (*(membank_read[addr >> 14] + (addr & 0x3fff))); // returns a byte from a 16KB memory bank
+  return membank_read_fast[addr >> 14][addr & 0x3fff];
 }
 
 inline byte read_mem(word addr) {
-  return read_mem_no_watchpoint(addr);
+  return membank_read_fast[addr >> 14][addr & 0x3fff];
 }
 
 inline void write_mem_no_watchpoint(word addr, byte val) {
-  *(membank_write[addr >> 14] + (addr & 0x3fff)) = val; // writes a byte to a 16KB memory bank
+  byte *bank = membank_write[addr >> 14];
+  word offset = addr & 0x3fff;
+  *(bank + offset) = val; // write to PSRAM
+  /* Mirror to shadow if this is lower 64KB */
+  if (bank >= pbRAM && bank < pbRAM + 65536) {
+    unsigned int shadow_addr = (unsigned int)(bank - pbRAM) + offset;
+    ram_shadow[shadow_addr] = val;
+  }
 }
 
 inline void write_mem(word addr, byte val) {
@@ -344,8 +360,27 @@ byte z80_read_mem(word addr) {
   return read_mem_no_watchpoint(addr);
 }
 
+void z80_invalidate_read_cache() {
+  /* Re-sync membank_read_fast with membank_read.
+   * Called when ROM banking changes (upper ROM selection, GA config). */
+  for (int n = 0; n < 4; ++n) {
+    byte *bank = membank_read[n];
+    if (pbRAM && bank >= pbRAM && bank < pbRAM + 65536) {
+      membank_read_fast[n] = ram_shadow + (bank - pbRAM);
+    } else {
+      membank_read_fast[n] = bank;
+    }
+  }
+}
+
 void z80_write_mem(word addr, byte val) {
   write_mem_no_watchpoint(addr, val);
+}
+
+void z80_sync_ram_shadow() {
+  if (pbRAM) {
+    memcpy(ram_shadow, pbRAM, 65536);
+  }
 }
 
 
@@ -356,12 +391,12 @@ void z80_write_mem(word addr, byte val) {
       crtc_cycle(iCycleCount >> 2); \
       if (CPC.snd_enabled) { \
          PSG.cycle_count.high += iCycleCount; \
-         if (PSG.cycle_count.high >= CPC.snd_cycle_count_init.high) { \
+         if (__builtin_expect(PSG.cycle_count.high >= CPC.snd_cycle_count_init.high, 0)) { \
             PSG.cycle_count.both -= CPC.snd_cycle_count_init.both; \
-            PSG.Synthesizer(); \
+            Synthesizer_Stereo16(); \
          } \
       } \
-      if (FDC.phase == EXEC_PHASE) { \
+      if (__builtin_expect(FDC.phase == EXEC_PHASE, 0)) { \
          FDC.timeout -= iCycleCount; \
          if (FDC.timeout <= 0) { \
             FDC.flags |= OVERRUN_flag; \
@@ -373,7 +408,7 @@ void z80_write_mem(word addr, byte val) {
             } \
          } \
       } \
-      if ((CPC.tape_motor) && (CPC.tape_play_button)) { \
+      if (__builtin_expect((CPC.tape_motor) && (CPC.tape_play_button), 0)) { \
          iTapeCycleCount -= iCycleCount; \
          if (iTapeCycleCount <= 0) { \
             Tape_UpdateLevel(); \
@@ -974,10 +1009,21 @@ void z80_init_tables()
 
 
 
-int z80_execute()
+static uint32_t prof_z80_cycles = 0, prof_crtc_cycles = 0, prof_other_cycles = 0;
+static int prof_frame_count = 0;
+
+static inline uint32_t dwt_read(void) {
+    return *(volatile uint32_t*)0xE0001004; // DWT->CYCCNT
+}
+
+/* Forward declaration — defined after z80_execute for source ordering reasons */
+static inline __attribute__((always_inline, section(".time_critical.z80"))) void z80_execute_instruction();
+
+__attribute__((section(".time_critical.z80"))) int z80_execute()
 {
    while (true) {
       z80_execute_instruction();
+      
       iCycleCount += iWSAdjust;
       z80_wait_states
 
@@ -1011,7 +1057,7 @@ int z80_execute()
 
 
 
-void z80_execute_instruction()
+static inline __attribute__((always_inline, section(".time_critical.z80"))) void z80_execute_instruction()
 {
       byte bOpCode = read_mem(_PC++);
       iCycleCount = cc_op[bOpCode];
@@ -1279,7 +1325,7 @@ void z80_execute_instruction()
 
 
 
-void z80_execute_pfx_cb_instruction()
+__attribute__((section(".time_critical.z80"))) void z80_execute_pfx_cb_instruction()
 {
    byte bOpCode;
 
@@ -1549,7 +1595,7 @@ void z80_execute_pfx_cb_instruction()
 
 
 
-void z80_execute_pfx_dd_instruction()
+__attribute__((section(".time_critical.z80"))) void z80_execute_pfx_dd_instruction()
 {
    byte bOpCode;
 
@@ -1819,7 +1865,7 @@ void z80_execute_pfx_dd_instruction()
 
 
 
-void z80_execute_pfx_ddcb_instruction()
+__attribute__((section(".time_critical.z80"))) void z80_execute_pfx_ddcb_instruction()
 {
    signed char o;
    byte bOpCode;
@@ -2090,7 +2136,7 @@ void z80_execute_pfx_ddcb_instruction()
 
 
 
-void z80_execute_pfx_ed_instruction()
+__attribute__((section(".time_critical.z80"))) void z80_execute_pfx_ed_instruction()
 {
    byte bOpCode;
 
@@ -2360,7 +2406,7 @@ void z80_execute_pfx_ed_instruction()
 
 
 
-void z80_execute_pfx_fd_instruction()
+__attribute__((section(".time_critical.z80"))) void z80_execute_pfx_fd_instruction()
 {
    byte bOpCode;
 
@@ -2630,7 +2676,7 @@ void z80_execute_pfx_fd_instruction()
 
 
 
-void z80_execute_pfx_fdcb_instruction()
+__attribute__((section(".time_critical.z80"))) void z80_execute_pfx_fdcb_instruction()
 {
    signed char o;
    byte bOpCode;

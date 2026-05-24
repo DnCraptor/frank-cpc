@@ -64,6 +64,8 @@ struct t_z80regs {
 
 byte z80_read_mem(word addr);
 void z80_write_mem(word addr, byte val);
+void z80_invalidate_read_cache();
+void z80_sync_ram_shadow();  /* copy lower 64KB PSRAM → SRAM shadow */
 
 // TODO: put declaration or definition of these two methods somewhere else !!!
 byte z80_IN_handler(reg_pair port); // not provided by Z80.c
@@ -74,8 +76,7 @@ void z80_init_tables();
 
 int z80_execute();
 
-// Handle main z80 instructions.
-void z80_execute_instruction();
+// z80_execute_instruction is static inline in z80.cpp — no extern declaration needed
 
 // Handle prefixed bits instructions.
 void z80_execute_pfx_cb_instruction();

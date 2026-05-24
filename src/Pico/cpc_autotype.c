@@ -81,7 +81,7 @@ static cpc_keymap_t ascii_to_cpc(unsigned int ks) {
         case ' ': k.row=5; k.bit=7; break;
         case 0xff0d:
             k.row=2; k.bit=2; break;
-        case '"': k.row=2; k.bit=5; k.shift=1; break;
+        case '"': k.row=8; k.bit=1; k.shift=1; break; /* Shift+2 */
         default: break;
     }
     return k;

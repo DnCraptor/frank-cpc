@@ -79,14 +79,15 @@ byte *pbSndBufferEnd = snd_buffer_storage + SND_BUFFER_SIZE;
 static int16_t audio_out_buf[AUDIO_OUT_MAX];
 static int audio_out_count = 0;
 
-/* Framebuffer (from main.c) */
-extern "C" uint8_t cpc_fb[CPC_FB_HEIGHT][CPC_FB_WIDTH];
+/* Direct render target: scanline callback writes here.
+ * Platform sets this to point into the back screen buffer. */
+static byte *scanline_render_target = nullptr;
+static int scanline_render_stride = CPC_FB_WIDTH;
 
 /* Scanline buffer in internal RAM — CRTC renders here instead of PSRAM.
- * At each HSYNC, the completed line is downsampled into cpc_fb.
+ * At each HSYNC, the completed line is copied into cpc_fb.
  * This avoids all PSRAM writes during rendering. */
 static byte scanline_buf[CPC_SCR_WIDTH] __attribute__((aligned(4)));
-
 /* CPC hardware colour table — 27 colours (3 levels per RGB channel).
  * Index = CPC hardware colour number (0-31, with gaps).
  * Values = RGB888. */
@@ -135,8 +136,13 @@ void InitAYCounterVars();
 /* ------------------------------------------------------------------ */
 /* ROM loading via FatFS                                              */
 /* ------------------------------------------------------------------ */
-static byte *rom_buffer = nullptr;    /* 32K for combined lower+upper ROM */
-static byte *amsdos_rom = nullptr;    /* 16K for AMSDOS ROM */
+/* ROM buffers in internal SRAM for fast Z80 access (instead of PSRAM).
+ * ROM is read-heavy: BASIC interpreter, BIOS, AMSDOS — keeping them
+ * in SRAM eliminates PSRAM latency on every ROM fetch. */
+static byte rom_buffer_sram[32768] __attribute__((aligned(4)));
+static byte amsdos_rom_sram[16384] __attribute__((aligned(4)));
+static byte *rom_buffer = rom_buffer_sram;
+static byte *amsdos_rom = amsdos_rom_sram;
 
 static int load_rom_file(const char *path, byte *dest, int max_size) {
     FIL f;
@@ -148,17 +154,9 @@ static int load_rom_file(const char *path, byte *dest, int max_size) {
 }
 
 static int load_roms(void) {
-    /* Allocate ROM space in PSRAM */
-    if (!rom_buffer) {
-        rom_buffer = (byte *)psram_malloc(32768);
-        if (!rom_buffer) return -1;
-        std::memset(rom_buffer, 0, 32768);
-    }
-    if (!amsdos_rom) {
-        amsdos_rom = (byte *)psram_malloc(16384);
-        if (!amsdos_rom) return -1;
-        std::memset(amsdos_rom, 0, 16384);
-    }
+    /* ROM buffers are statically allocated in internal SRAM */
+    std::memset(rom_buffer, 0, 32768);
+    std::memset(amsdos_rom, 0, 16384);
 
     /* Determine ROM filename based on CPC model */
     const char *rom_name;
@@ -336,21 +334,21 @@ static int load_tape_image(const char *path) {
 static int fb_y_start = 0; /* first VDU.scrln that maps to cpc_fb row 0 */
 
 /* Called by CRTC at each HSYNC with completed scanline number.
- * scr_base currently points into scanline_buf (internal RAM).
- * We downsample the line directly into cpc_fb. */
-static void scanline_complete(int scrln) {
+ * Uses DMA to copy scanline data to PSRAM while CPU continues.
+ * Double-buffers: CRTC switches to other buffer while DMA copies this one. */
+void __attribute__((section(".time_critical.adapter"))) scanline_complete(int scrln) {
     int fb_y = scrln - fb_y_start;
-    if (fb_y < 0 || fb_y >= CPC_FB_HEIGHT) return;
+    if ((unsigned)fb_y >= (unsigned)CPC_FB_HEIGHT) return;
+    if (!scanline_render_target) return;
 
-    /* scanline_buf has up to 768 rendered bytes (48 chars × 16 bytes).
-     * Downsample by 2 → 384 pixels, then take the centre 320. */
-    const byte *src = scanline_buf;
-    byte *dst = cpc_fb[fb_y];
-    /* skip_left = (384 - 320) / 2 = 32 pixels = 64 source bytes */
-    const int skip_bytes = 64;
-    src += skip_bytes;
-    for (int x = 0; x < CPC_FB_WIDTH; x++) {
-        dst[x] = src[x * 2];
+    const uint32_t *src = (const uint32_t *)(scanline_buf + 32);
+    uint32_t *dst = (uint32_t *)(scanline_render_target + fb_y * scanline_render_stride);
+    /* Copy 320 bytes = 80 words, unrolled 8× for pipeline efficiency */
+    for (int i = 0; i < 80; i += 8) {
+        uint32_t a = src[i], b = src[i+1], c = src[i+2], d = src[i+3];
+        uint32_t e = src[i+4], f = src[i+5], g = src[i+6], h = src[i+7];
+        dst[i] = a; dst[i+1] = b; dst[i+2] = c; dst[i+3] = d;
+        dst[i+4] = e; dst[i+5] = f; dst[i+6] = g; dst[i+7] = h;
     }
 }
 
@@ -373,23 +371,15 @@ static void setup_hw_palette(void) {
 /* Audio: convert PSG buffer to platform audio ring                   */
 /* ------------------------------------------------------------------ */
 static void flush_audio(void) {
-    /* PSG writes 16-bit stereo samples (4 bytes each) into snd_buffer_storage.
-     * When buffer_full fires, copy what's there to audio_out_buf and push
-     * to the platform audio ring. */
-    int bytes_used = (int)(CPC.snd_bufferptr - pbSndBuffer);
-    if (bytes_used <= 0) return;
-
-    /* 16-bit stereo: 4 bytes per sample frame */
-    int frames = bytes_used / 4;
+    /* PSG resets snd_bufferptr to pbSndBuffer when buffer is full,
+     * so the pointer offset is always 0 when we get here.
+     * The buffer contains SND_BUFFER_SIZE bytes of audio data. */
+    int frames = SND_BUFFER_SIZE / 4;  /* 16-bit stereo: 4 bytes per frame */
     if (frames > AUDIO_OUT_MAX / 2) frames = AUDIO_OUT_MAX / 2;
 
-    /* Convert: snd_buffer has L16 R16 pairs → push to platform */
     const int16_t *src = (const int16_t *)pbSndBuffer;
     audio_out_count = frames;
     std::memcpy(audio_out_buf, src, frames * 4);
-
-    /* Reset buffer pointer */
-    CPC.snd_bufferptr = pbSndBuffer;
 }
 
 /* ------------------------------------------------------------------ */
@@ -448,7 +438,7 @@ int cpc_engine_init(void) {
     CPC.limit_speed = 1;
 
     /* Rendering: CRTC writes into scanline_buf (internal RAM) one line at a time.
-     * The scanline_complete callback downsamples each line into cpc_fb. */
+     * The scanline_complete callback copies each line into cpc_fb. */
     std::memset(scanline_buf, 0, sizeof(scanline_buf));
     CPC.scr_bps = CPC_SCR_WIDTH;    /* bytes per scanline */
     CPC.scr_line_offs = 0;          /* DON'T advance — we reuse scanline_buf each line */
@@ -457,8 +447,10 @@ int cpc_engine_init(void) {
     CPC.scr_line_complete = scanline_complete;
     CPC.dwYScale = 1;
 
-    /* Vertical centering: map 312 PAL lines → 200 visible rows */
-    fb_y_start = (CPC_SCR_HEIGHT - CPC_FB_HEIGHT) / 2;
+    /* Vertical centering: map 312 PAL lines → 240 visible rows.
+     * Tuned to center typical CPC display (including overscan games). */
+    fb_y_start = 21;
+    crtc_fb_y_start = fb_y_start;
 
     /* Allocate CPC RAM in PSRAM */
     int ram_bytes = CPC.ram_size * 1024;
@@ -479,6 +471,7 @@ int cpc_engine_init(void) {
     /* Initialize engine */
     emulator_init();
     emulator_reset();
+    z80_sync_ram_shadow(); /* copy CPC RAM to SRAM shadow for fast reads */
 
     /* Set up hardware palette */
     setup_hw_palette();
@@ -489,12 +482,14 @@ int cpc_engine_init(void) {
 
 void cpc_engine_reset(void) {
     emulator_reset();
+    z80_sync_ram_shadow();
 }
 
 void cpc_engine_run_frame(void) {
     int exit_code;
     static int profile_counter = 0;
     static uint64_t accum_z80_us = 0;
+    static int snd_buf_count = 0;
 
     absolute_time_t t0 = get_absolute_time();
 
@@ -506,6 +501,7 @@ void cpc_engine_run_frame(void) {
         exit_code = z80_execute();
 
         if (exit_code == EC_SOUND_BUFFER) {
+            snd_buf_count++;
             flush_audio();
             audio_ring_push_stereo(audio_out_buf, audio_out_count);
         }
@@ -515,10 +511,14 @@ void cpc_engine_run_frame(void) {
 
     accum_z80_us += absolute_time_diff_us(t0, t1);
     profile_counter++;
-    if (profile_counter >= 100) {
-        printf("PROFILE: frame=%llu us/frame\n", accum_z80_us / 100);
+    if (profile_counter >= 50) {
+        printf("PROFILE: frame=%llu us, snd_bufs=%d, snd_en=%d, bufptr_off=%d\n",
+               accum_z80_us / 50, snd_buf_count,
+               (int)CPC.snd_enabled,
+               (int)(CPC.snd_bufferptr - pbSndBuffer));
         accum_z80_us = 0;
         profile_counter = 0;
+        snd_buf_count = 0;
     }
 }
 
@@ -528,6 +528,11 @@ void cpc_key_matrix_set(int row, int bit, int pressed) {
         keyboard_matrix[row] &= ~(1u << bit);
     else
         keyboard_matrix[row] |= (1u << bit);
+}
+
+void cpc_set_render_target(uint8_t *buffer, int stride) {
+    scanline_render_target = buffer;
+    scanline_render_stride = stride;
 }
 
 uint8_t *cpc_get_keyboard_matrix(void) {
@@ -672,6 +677,7 @@ int cpc_snapshot_load(const char *path) {
     ga_memory_manager();
 
     printf("cpc_adapter: snapshot loaded (%lu KB)\n", (unsigned long)ram_size);
+    z80_sync_ram_shadow(); /* sync shadow after RAM was overwritten */
     return 0;
 }
 

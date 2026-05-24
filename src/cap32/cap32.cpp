@@ -35,6 +35,9 @@ extern t_VDU VDU;
 
 extern byte *membank_read[4];
 extern byte *membank_write[4];
+extern byte *membank_read_fast[4];
+extern byte ram_shadow[];
+extern void z80_invalidate_read_cache();
 
 extern byte *pbRAM;
 extern byte *pbROM;
@@ -60,6 +63,7 @@ void InitAY();
 byte fdc_read_status();
 byte fdc_read_data();
 void fdc_write_data(byte val);
+void crtc_update_palette_cache();
 
 #define MAX_FREQ_ENTRIES 5
 
@@ -168,6 +172,20 @@ void ga_init_banking(t_MemBankConfig& banking, unsigned char RAM_bank)
    banking[7][3] = romb3;
 }
 
+/* Update membank_read_fast[n] to always point to SRAM.
+ * For RAM banks in lower 64KB, point to ram_shadow.
+ * For ROM or extended RAM, use the existing pointer (already SRAM or PSRAM). */
+static void update_fast_banks() {
+   for (int n = 0; n < 4; ++n) {
+      byte *bank = membank_read[n];
+      if (pbRAM && bank >= pbRAM && bank < pbRAM + 65536) {
+         membank_read_fast[n] = ram_shadow + (bank - pbRAM);
+      } else {
+         membank_read_fast[n] = bank;
+      }
+   }
+}
+
 void ga_memory_manager()
 {
    dword mem_bank = 0;
@@ -209,9 +227,11 @@ void ga_memory_manager()
          membank_read[3] = pbExpansionROM;
       }
    }
+   update_fast_banks();
+   z80_invalidate_read_cache();
 }
 
-byte z80_IN_handler(reg_pair port)
+__attribute__((section(".time_critical.cap32"))) byte z80_IN_handler(reg_pair port)
 {
    byte ret_val = 0xff;
 
@@ -306,7 +326,7 @@ byte z80_IN_handler(reg_pair port)
    return ret_val;
 }
 
-void z80_OUT_handler(reg_pair port, byte val)
+__attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair port, byte val)
 {
    if ((port.b.h & 0xc0) == 0x40) {
       switch (val >> 6) {
@@ -318,6 +338,7 @@ void z80_OUT_handler(reg_pair port, byte val)
             GateArray.ink_values[GateArray.pen] = val & 0x1f;
             GateArray.palette[GateArray.pen] = GateArray.ink_values[GateArray.pen];
             GateArray.palette[33] = GateArray.palette[1];
+            crtc_update_palette_cache();
             break;
 
          case 2:
@@ -351,15 +372,18 @@ void z80_OUT_handler(reg_pair port, byte val)
             switch (CRTC.reg_select) {
                case 0:
                   CRTC.registers[0] = val;
+                  crtc_recompute_next_event();
                   break;
 
                case 1:
                   CRTC.registers[1] = val;
                   update_skew();
+                  crtc_recompute_next_event();
                   break;
 
                case 2:
                   CRTC.registers[2] = val;
+                  crtc_recompute_next_event();
                   break;
 
                case 3:
@@ -432,6 +456,7 @@ void z80_OUT_handler(reg_pair port, byte val)
                         CRTC.r9match = temp;
                         if (temp) {
                            CRTC.CharInstMR = CharMR1;
+                           CRTC.charInstMR_state = 1;
                         }
                      }
                      if (CRTC.raster_count == CRTC.registers[9]) {
@@ -489,6 +514,7 @@ void z80_OUT_handler(reg_pair port, byte val)
       if ((GateArray.ROM_config & 0x08) == 0 && pbExpansionROM != nullptr) {
          membank_read[3] = pbExpansionROM;
       }
+      z80_invalidate_read_cache();
    }
 
    if ((port.b.h & 0x08) == 0) {
@@ -658,6 +684,7 @@ int video_set_palette()
    }
 
    GateArray.palette[33] = GateArray.palette[1];
+   crtc_update_palette_cache();
    return 0;
 }
 

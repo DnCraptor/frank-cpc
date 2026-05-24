@@ -80,11 +80,10 @@ static inline uint get_psram_pin(void) {
 #endif
 
 #define CPC_FB_WIDTH    320
-#define CPC_FB_HEIGHT   200   /* CPC logical render height */
+#define CPC_FB_HEIGHT   240   /* CPC logical render height — full screen */
 /* HDMI.c uses CONTENT_SCANLINES=240*2 and accesses SCREEN[line 0..239].
  * screen_mem must be exactly CPC_SCREEN_LINES rows tall.
- * Rows 0..top_pad-1 and (top_pad+CPC_FB_HEIGHT)..239 hold the border colour,
- * filled by cpc_frame_present() to centre the 200 active lines in 240. */
+ * With CPC_FB_HEIGHT=240, active lines fill the entire screen. */
 #define CPC_SCREEN_LINES 240
 
 #endif /* BOARD_CONFIG_H */
