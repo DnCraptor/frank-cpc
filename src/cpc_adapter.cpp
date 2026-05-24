@@ -385,6 +385,9 @@ static void flush_audio(void) {
      * Each pole: alpha = 3/4 → combined -3dB at ~6.5 kHz, -12dB/oct. */
     static int32_t lp1_l = 0, lp1_r = 0;
     static int32_t lp2_l = 0, lp2_r = 0;
+#ifdef HDMI_PIO_AUDIO
+    static int32_t lp3_l = 0, lp3_r = 0;   /* 3rd pole for HDMI */
+#endif
     /* DC-blocking high-pass (AC coupling like real CPC hardware).
      * Uses a slow-tracking DC estimator: dc += (x - dc) >> 8
      * which gives a ~17 Hz cutoff at 44100 Hz. */
@@ -398,17 +401,18 @@ static void flush_audio(void) {
         l -= dc_l;
         r -= dc_r;
         /* Low-pass filter to smooth PSG square-wave edges.
-         * HDMI digital output needs stronger filtering (alpha=1/2, ~3.5kHz)
-         * since it lacks the natural analog RC filtering of an I2S DAC.
-         * I2S path uses lighter filtering (alpha=3/4, ~6.5kHz). */
+         * HDMI: 3-pole at alpha=1/2 (~1.8 kHz -3dB, -18dB/oct)
+         * I2S:  2-pole at alpha=3/4 (~6.5 kHz -3dB, -12dB/oct) */
 #ifdef HDMI_PIO_AUDIO
         lp1_l += (l - lp1_l) >> 1;
         lp1_r += (r - lp1_r) >> 1;
         lp2_l += (lp1_l - lp2_l) >> 1;
         lp2_r += (lp1_r - lp2_r) >> 1;
-        /* Attenuate to match real CPC analog output levels (~-16 dB) */
-        audio_out_buf[i * 2]     = (int16_t)(lp2_l >> 2);
-        audio_out_buf[i * 2 + 1] = (int16_t)(lp2_r >> 2);
+        lp3_l += (lp2_l - lp3_l) >> 1;
+        lp3_r += (lp2_r - lp3_r) >> 1;
+        /* Attenuate to match real CPC analog output levels */
+        audio_out_buf[i * 2]     = (int16_t)(lp3_l >> 2);
+        audio_out_buf[i * 2 + 1] = (int16_t)(lp3_r >> 2);
 #else
         lp1_l += ((l - lp1_l) * 3) >> 2;
         lp1_r += ((r - lp1_r) * 3) >> 2;
@@ -465,7 +469,11 @@ int cpc_engine_init(void) {
     CPC.jumpers = 0x1e;
     CPC.scr_bpp = 8;
     CPC.snd_enabled = 1;
+#ifdef HDMI_PIO_AUDIO
+    CPC.snd_playback_rate = 5;   /* 32000 Hz — matches HDMI audio rate exactly */
+#else
     CPC.snd_playback_rate = 2;   /* 44100 Hz (index into freq_table) */
+#endif
     CPC.snd_bits = 1;            /* 16-bit */
     CPC.snd_stereo = 1;         /* stereo */
     CPC.snd_volume = 80;

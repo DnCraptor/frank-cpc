@@ -65,7 +65,7 @@ byte fdc_read_data();
 void fdc_write_data(byte val);
 void crtc_update_palette_cache();
 
-#define MAX_FREQ_ENTRIES 5
+#define MAX_FREQ_ENTRIES 6
 
 namespace {
 
@@ -110,7 +110,8 @@ dword freq_table[MAX_FREQ_ENTRIES] = {
    22050,
    44100,
    48000,
-   96000
+   96000,
+   32000
 };
 
 void ga_init_banking(t_MemBankConfig& banking, unsigned char RAM_bank)
