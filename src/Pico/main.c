@@ -262,8 +262,9 @@ void i2s_audio_drain(void) {
 /* HDMI_PIO: I2S audio ring buffer + Core 1 render loop. */
 #define AUDIO_SAMPLE_RATE       44100
 #define AUDIO_FRAMES_PER_CHUNK  882
-#define AUDIO_RING_FRAMES       (1u << 12)
+#define AUDIO_RING_FRAMES       (1u << 13)   /* 8192 frames = ~186ms headroom */
 #define AUDIO_RING_MASK         (AUDIO_RING_FRAMES - 1)
+#define AUDIO_RING_TARGET       4096  /* target fill level (half ring) */
 
 static uint32_t __attribute__((aligned(4))) g_audio_ring[AUDIO_RING_FRAMES];
 volatile uint32_t g_audio_prod = 0;
@@ -301,7 +302,30 @@ unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
-    uint32_t free_slots = AUDIO_RING_FRAMES - (prod - cons);
+    uint32_t fill = prod - cons;
+    uint32_t free_slots = AUDIO_RING_FRAMES - fill;
+
+    /* Always-on stretch to compensate for emulation < 50fps.
+     * Duplicates 1-in-16 samples (~6.25% stretch).
+     * If ring overflows, normal (non-stretch) path drops excess. */
+    if (count > 4) {
+        unsigned out = 0;
+        for (unsigned i = 0; i < count && out < free_slots; ++i) {
+            int16_t l = samples[i * 2];
+            int16_t r = samples[i * 2 + 1];
+            uint32_t packed = ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
+            g_audio_ring[(prod + out) & AUDIO_RING_MASK] = packed;
+            out++;
+            if ((i & 15) == 15 && out < free_slots) {
+                g_audio_ring[(prod + out) & AUDIO_RING_MASK] = packed;
+                out++;
+            }
+        }
+        __dmb();
+        g_audio_prod = prod + out;
+        return count;
+    }
+
     if (count > free_slots) count = free_slots;
     for (unsigned i = 0; i < count; ++i) {
         int16_t l = samples[i * 2];
@@ -325,14 +349,21 @@ void __time_critical_func(render_core)(void) {
     i2s_cfg = i2s_get_default_config();
     i2s_cfg.sample_freq     = AUDIO_SAMPLE_RATE;
     i2s_cfg.dma_trans_count = AUDIO_FRAMES_PER_CHUNK;
-    i2s_volume(&i2s_cfg, 0);   /* no extra shift; volume controlled in mix_notes */
+    i2s_volume(&i2s_cfg, 0);
     i2s_init(&i2s_cfg);
 
     static uint32_t __attribute__((aligned(32))) chunk[AUDIO_FRAMES_PER_CHUNK];
 
+    /* Pre-fill ring with silence — gives ~140ms headroom for jitter */
+    for (uint32_t i = 0; i < (AUDIO_RING_FRAMES * 3 / 4); ++i)
+        g_audio_ring[i] = 0;
+    g_audio_prod = AUDIO_RING_FRAMES * 3 / 4;
+
     __dmb();
     core1_ready = true;
     __dmb();
+
+    static uint32_t last_sample = 0;  /* hold last sample for underrun fade */
 
     while (true) {
         uint32_t prod = g_audio_prod;
@@ -342,11 +373,37 @@ void __time_critical_func(render_core)(void) {
         if (avail >= AUDIO_FRAMES_PER_CHUNK) {
             for (uint32_t i = 0; i < AUDIO_FRAMES_PER_CHUNK; ++i)
                 chunk[i] = g_audio_ring[(cons + i) & AUDIO_RING_MASK];
+            last_sample = chunk[AUDIO_FRAMES_PER_CHUNK - 1];
             __dmb();
             g_audio_cons = cons + AUDIO_FRAMES_PER_CHUNK;
+        } else if (avail > 0) {
+            /* Partial read: play what's available, fade to zero */
+            for (uint32_t i = 0; i < avail; ++i)
+                chunk[i] = g_audio_ring[(cons + i) & AUDIO_RING_MASK];
+            last_sample = chunk[avail - 1];
+            /* Fade from last sample to zero over remaining frames */
+            int16_t fade_l = (int16_t)(last_sample & 0xFFFF);
+            int16_t fade_r = (int16_t)(last_sample >> 16);
+            uint32_t remain = AUDIO_FRAMES_PER_CHUNK - avail;
+            for (uint32_t i = 0; i < remain; ++i) {
+                int32_t frac = (int32_t)(remain - i);
+                int16_t l = (int16_t)(fade_l * frac / (int32_t)remain);
+                int16_t r = (int16_t)(fade_r * frac / (int32_t)remain);
+                chunk[avail + i] = ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
+            }
+            __dmb();
+            g_audio_cons = cons + avail;
         } else {
-            for (uint32_t i = 0; i < AUDIO_FRAMES_PER_CHUNK; ++i)
-                chunk[i] = 0;
+            /* Empty ring: fade from last sample to zero */
+            int16_t fade_l = (int16_t)(last_sample & 0xFFFF);
+            int16_t fade_r = (int16_t)(last_sample >> 16);
+            for (uint32_t i = 0; i < AUDIO_FRAMES_PER_CHUNK; ++i) {
+                int32_t frac = (int32_t)(AUDIO_FRAMES_PER_CHUNK - i);
+                int16_t l = (int16_t)(fade_l * frac / (int32_t)AUDIO_FRAMES_PER_CHUNK);
+                int16_t r = (int16_t)(fade_r * frac / (int32_t)AUDIO_FRAMES_PER_CHUNK);
+                chunk[i] = ((uint32_t)(uint16_t)r << 16) | (uint16_t)l;
+            }
+            last_sample = 0;
         }
         i2s_dma_write(&i2s_cfg, (const int16_t *)chunk);
     }
