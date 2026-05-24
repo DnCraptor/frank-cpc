@@ -527,7 +527,8 @@ void cpc_pico_main(void) {
      *   (add \n characters in the value for multi-second waits before Space etc.)
      */
     {
-        /* If autorun= is set in cpc.ini, use it verbatim (Enter appended).
+        /* If autorun= is set in cpc.ini, use it verbatim.
+         * \r = Enter, \n = 10-second pause.
          * Fallback: if any disk is mounted (by any autoload path), try
          * RUN"DISC + 30s wait + Space — works for most autobooting CPC games. */
         char cmd[128];
@@ -539,19 +540,6 @@ void cpc_pico_main(void) {
                 if (src[0] == '\\' && src[1] == 'n') { cmd[di++] = '\n'; src += 2; }
                 else if (src[0] == '\\' && src[1] == 'r') { cmd[di++] = '\r'; src += 2; }
                 else cmd[di++] = *src++;
-            }
-            cmd[di++] = '\r';
-            /* Exolon needs the trainer answers, then several Space presses
-             * from the planets title before the options menu appears. */
-            const char *disk = cpc_mounted_disk_name(0);
-            if (disk && (strstr(disk, "xolon") || strstr(disk, "XOLON"))
-                && di < (int)sizeof(cmd) - 16) {
-                cmd[di++] = '\n'; /* wait for trainer */
-                cmd[di++] = 'y'; cmd[di++] = 'y'; cmd[di++] = 'y'; cmd[di++] = 'y';
-                cmd[di++] = '\n'; /* wait for title */
-                cmd[di++] = ' '; cmd[di++] = ' '; cmd[di++] = ' ';
-                cmd[di++] = ' '; cmd[di++] = ' ';
-                cmd[di++] = '\n'; /* wait on options menu */
             }
             cmd[di] = '\0';
             printf("autorun: %s\n", g_cpc_settings.autorun);
