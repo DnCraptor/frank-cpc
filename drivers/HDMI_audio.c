@@ -197,43 +197,73 @@ extern unsigned i2s_ring_free(void);
 unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
     if (SELECT_VGA)
         return i2s_ring_push(samples, count);
-    /* Downsample 44100 → 32000 Hz (Bresenham) then expand to stereo. */
+    /* Downsample 44100 → 32000 Hz (Bresenham) with linear interpolation. */
     static uint32_t phase_m = 0;
-    int16_t stereo[640 * 2];
+    static int16_t prev_m = 0;
+    static int16_t stereo[1024 * 2];    /* static to avoid stack overflow */
     unsigned out = 0;
-    for (unsigned i = 0; i < count && out < 640; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         phase_m += 32000;
         if (phase_m >= 44100) {
             phase_m -= 44100;
-            stereo[out * 2 + 0] = samples[i];
-            stereo[out * 2 + 1] = samples[i];
+            /* Linear interpolation between previous and current sample */
+            int32_t frac = (phase_m << 8) / 44100;  /* 0..255 */
+            int16_t s = (int16_t)(((int32_t)prev_m * (256 - frac) +
+                                   (int32_t)samples[i] * frac) >> 8);
+            stereo[out * 2 + 0] = s;
+            stereo[out * 2 + 1] = s;
             out++;
         }
+        prev_m = samples[i];
     }
-    if (out > 0)
-        frank_hdmi_audio_write(stereo, out);
+    /* Write in chunks, retrying with a brief yield when the ring is full.
+     * Limit retries to avoid deadlock before DVI is started. */
+    unsigned written = 0;
+    int retries = 0;
+    while (written < out && retries < 200) {
+        unsigned n = frank_hdmi_audio_write(stereo + written * 2, out - written);
+        written += n;
+        if (n == 0) { __asm volatile("nop"); retries++; }
+        else retries = 0;
+    }
     return count;
 }
 
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     if (SELECT_VGA)
         return i2s_ring_push_stereo(samples, count);
-    /* Downsample 44100 → 32000 Hz using Bresenham-style fractional step.
+    /* Downsample 44100 → 32000 Hz (Bresenham) with linear interpolation.
      * For every 441 input frames we produce 320 output frames. */
     static uint32_t phase = 0;       /* fractional accumulator */
-    int16_t resampled[640 * 2];
+    static int16_t prev_l = 0, prev_r = 0;
+    static int16_t resampled[1024 * 2];     /* static to avoid stack overflow */
     unsigned out = 0;
-    for (unsigned i = 0; i < count && out < 640; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         phase += 32000;
         if (phase >= 44100) {
             phase -= 44100;
-            resampled[out * 2]     = samples[i * 2];
-            resampled[out * 2 + 1] = samples[i * 2 + 1];
+            /* Linear interpolation for smoother resampling */
+            int32_t frac = (phase << 8) / 44100;  /* 0..255 */
+            int32_t ifrac = 256 - frac;
+            resampled[out * 2]     = (int16_t)(((int32_t)prev_l * ifrac +
+                                                (int32_t)samples[i * 2] * frac) >> 8);
+            resampled[out * 2 + 1] = (int16_t)(((int32_t)prev_r * ifrac +
+                                                (int32_t)samples[i * 2 + 1] * frac) >> 8);
             out++;
         }
+        prev_l = samples[i * 2];
+        prev_r = samples[i * 2 + 1];
     }
-    if (out > 0)
-        frank_hdmi_audio_write(resampled, out);
+    /* Write in chunks, retrying with a brief yield when the ring is full.
+     * Limit retries to avoid deadlock before DVI is started. */
+    unsigned written = 0;
+    int retries = 0;
+    while (written < out && retries < 200) {
+        unsigned n = frank_hdmi_audio_write(resampled + written * 2, out - written);
+        written += n;
+        if (n == 0) { __asm volatile("nop"); retries++; }
+        else retries = 0;
+    }
     return count;
 }
 
