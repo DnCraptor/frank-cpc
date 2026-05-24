@@ -385,15 +385,38 @@ static void flush_audio(void) {
      * Each pole: alpha = 3/4 → combined -3dB at ~6.5 kHz, -12dB/oct. */
     static int32_t lp1_l = 0, lp1_r = 0;
     static int32_t lp2_l = 0, lp2_r = 0;
+    /* DC-blocking high-pass (AC coupling like real CPC hardware).
+     * Uses a slow-tracking DC estimator: dc += (x - dc) >> 8
+     * which gives a ~17 Hz cutoff at 44100 Hz. */
+    static int32_t dc_l = 0, dc_r = 0;
     for (int i = 0; i < frames; ++i) {
         int32_t l = src[i * 2];
         int32_t r = src[i * 2 + 1];
+        /* Track and remove DC offset */
+        dc_l += (l - dc_l) >> 8;
+        dc_r += (r - dc_r) >> 8;
+        l -= dc_l;
+        r -= dc_r;
+        /* Low-pass filter to smooth PSG square-wave edges.
+         * HDMI digital output needs stronger filtering (alpha=1/2, ~3.5kHz)
+         * since it lacks the natural analog RC filtering of an I2S DAC.
+         * I2S path uses lighter filtering (alpha=3/4, ~6.5kHz). */
+#ifdef HDMI_PIO_AUDIO
+        lp1_l += (l - lp1_l) >> 1;
+        lp1_r += (r - lp1_r) >> 1;
+        lp2_l += (lp1_l - lp2_l) >> 1;
+        lp2_r += (lp1_r - lp2_r) >> 1;
+        /* Attenuate to match real CPC analog output levels (~-16 dB) */
+        audio_out_buf[i * 2]     = (int16_t)(lp2_l >> 2);
+        audio_out_buf[i * 2 + 1] = (int16_t)(lp2_r >> 2);
+#else
         lp1_l += ((l - lp1_l) * 3) >> 2;
         lp1_r += ((r - lp1_r) * 3) >> 2;
         lp2_l += ((lp1_l - lp2_l) * 3) >> 2;
         lp2_r += ((lp1_r - lp2_r) * 3) >> 2;
         audio_out_buf[i * 2]     = (int16_t)lp2_l;
         audio_out_buf[i * 2 + 1] = (int16_t)lp2_r;
+#endif
     }
 }
 

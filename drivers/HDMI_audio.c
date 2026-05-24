@@ -197,20 +197,44 @@ extern unsigned i2s_ring_free(void);
 unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
     if (SELECT_VGA)
         return i2s_ring_push(samples, count);
+    /* Downsample 44100 → 32000 Hz (Bresenham) then expand to stereo. */
+    static uint32_t phase_m = 0;
     int16_t stereo[640 * 2];
-    if (count > 640) count = 640;
-    for (unsigned i = 0; i < count; i++) {
-        stereo[i * 2 + 0] = samples[i];
-        stereo[i * 2 + 1] = samples[i];
+    unsigned out = 0;
+    for (unsigned i = 0; i < count && out < 640; ++i) {
+        phase_m += 32000;
+        if (phase_m >= 44100) {
+            phase_m -= 44100;
+            stereo[out * 2 + 0] = samples[i];
+            stereo[out * 2 + 1] = samples[i];
+            out++;
+        }
     }
-    return frank_hdmi_audio_write(stereo, count);
+    if (out > 0)
+        frank_hdmi_audio_write(stereo, out);
+    return count;
 }
 
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     if (SELECT_VGA)
         return i2s_ring_push_stereo(samples, count);
-    if (count > 640) count = 640;
-    return frank_hdmi_audio_write(samples, count);
+    /* Downsample 44100 → 32000 Hz using Bresenham-style fractional step.
+     * For every 441 input frames we produce 320 output frames. */
+    static uint32_t phase = 0;       /* fractional accumulator */
+    int16_t resampled[640 * 2];
+    unsigned out = 0;
+    for (unsigned i = 0; i < count && out < 640; ++i) {
+        phase += 32000;
+        if (phase >= 44100) {
+            phase -= 44100;
+            resampled[out * 2]     = samples[i * 2];
+            resampled[out * 2 + 1] = samples[i * 2 + 1];
+            out++;
+        }
+    }
+    if (out > 0)
+        frank_hdmi_audio_write(resampled, out);
+    return count;
 }
 
 unsigned audio_ring_free(void) {

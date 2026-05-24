@@ -117,7 +117,13 @@ target_compile_definitions(ps2_driver PRIVATE ${PLATFORM_DEF}=1)
 
 if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO")
     # --- HDMI_PIO_AUDIO: frank-hdmi-sound library (HDMI-embedded audio) ---
-    set(FRANK_HDMI_SM_CLKDIV "1" CACHE STRING "" FORCE)
+    # TMDS bit clock = sys_clock / CLKDIV.  Need 252 MHz TMDS.
+    #   CPU ≤ 252 MHz → CLKDIV=1;  CPU > 252 MHz (e.g. 504) → CLKDIV=2.
+    if(CPU_SPEED GREATER 252)
+        set(FRANK_HDMI_SM_CLKDIV "2" CACHE STRING "" FORCE)
+    else()
+        set(FRANK_HDMI_SM_CLKDIV "1" CACHE STRING "" FORCE)
+    endif()
     add_subdirectory(frank-hdmi-sound/src)
 
     add_library(drivers
