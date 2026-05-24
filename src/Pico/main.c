@@ -305,19 +305,23 @@ unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     uint32_t fill = prod - cons;
     uint32_t free_slots = AUDIO_RING_FRAMES - fill;
 
-    /* PSG produces at 44100Hz. We downsample 2:1 to ~22050Hz for I2S.
-     * Adaptive resampler compensates for FPS < 50 by stretching output.
-     * Step in 16.16 fixed-point over the 44100Hz input stream.
-     * At 47fps, need step ≈ 2*47/50*65536 = 122880 to produce
-     * 22050 output samples/sec from 41454 input samples/sec.
-     * Feedback adjusts step based on ring fill level. */
+    /* PSG produces at 44100Hz. We downsample to ~22050Hz for I2S.
+     * Adaptive resampler with feedback keeps ring at target fill level,
+     * automatically compensating for any FPS — no hardcoded ratio.
+     * Step is 16.16 fixed-point over the 44100Hz input stream.
+     * 131072 = 2.0 = pure 2:1 downsample (perfect at 50fps).
+     * When FPS < 50, ring drains → error < 0 → step decreases → more output. */
     if (count > 4) {
         int32_t error = (int32_t)fill - (int32_t)AUDIO_RING_TARGET;
-        /* Baseline step: 2.0 in fixed-point = 131072 for pure 2:1 downsample.
-         * At 47fps we need ~6% more output, so baseline = 131072 * 47/50 ≈ 123008.
-         * Feedback: gain=4, gentle correction to avoid pitch wobble. */
-        int32_t step_i = 123008 + error * 4;
-        if (step_i > 131072) step_i = 131072;  /* never upsample past 2:1 */
+        /* PI controller: proportional + integral for zero steady-state error.
+         * I-term accumulates error to find the correct steady-state step.
+         * Pre-seed integrator for ~47fps: step_ss ≈ 123008 → I = (123008-131072)*32 */
+        static int32_t integrator = -258000;
+        integrator += error;
+        if (integrator > 100000) integrator = 100000;
+        if (integrator < -600000) integrator = -600000;
+        int32_t step_i = 131072 + error * 2 + integrator / 32;
+        if (step_i > 135000) step_i = 135000;  /* allow slight oversample */
         if (step_i < 110000) step_i = 110000;  /* max ~19% stretch */
         uint32_t step = (uint32_t)step_i;
 
