@@ -56,8 +56,8 @@ else()
     set(TV_PIN 12)
 endif()
 
-set(CPU_SPEED  "252" CACHE STRING "CPU clock in MHz")
-set(PSRAM_SPEED "133" CACHE STRING "PSRAM max frequency in MHz")
+set(CPU_SPEED  "504" CACHE STRING "CPU clock in MHz")
+set(PSRAM_SPEED "100" CACHE STRING "PSRAM max frequency in MHz")
 set(FLASH_SPEED "66"  CACHE STRING "Flash target max frequency in MHz")
 
 if(CPU_SPEED GREATER_EQUAL 504)

@@ -329,10 +329,11 @@ void __time_critical_func(render_core)(void) {
     i2s_cfg = i2s_get_default_config();
     i2s_cfg.sample_freq     = AUDIO_SAMPLE_RATE;
     i2s_cfg.dma_trans_count = AUDIO_FRAMES_PER_CHUNK;
-    i2s_volume(&i2s_cfg, 0);   /* no extra shift; volume controlled in mix_notes */
+    i2s_volume(&i2s_cfg, 0);
     i2s_init(&i2s_cfg);
 
     static uint32_t __attribute__((aligned(32))) chunk[AUDIO_FRAMES_PER_CHUNK];
+    memset(chunk, 0, sizeof(chunk));
 
     __dmb();
     core1_ready = true;
@@ -340,6 +341,7 @@ void __time_critical_func(render_core)(void) {
 
     while (true) {
         uint32_t prod = g_audio_prod;
+        __dmb();
         uint32_t cons = g_audio_cons;
         uint32_t avail = prod - cons;
 
@@ -348,10 +350,9 @@ void __time_critical_func(render_core)(void) {
                 chunk[i] = g_audio_ring[(cons + i) & AUDIO_RING_MASK];
             __dmb();
             g_audio_cons = cons + AUDIO_FRAMES_PER_CHUNK;
-        } else {
-            for (uint32_t i = 0; i < AUDIO_FRAMES_PER_CHUNK; ++i)
-                chunk[i] = 0;
         }
+        /* If not enough data, replay last chunk (stays in chunk[]) */
+
         i2s_dma_write(&i2s_cfg, (const int16_t *)chunk);
     }
 }

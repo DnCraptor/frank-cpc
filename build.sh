@@ -20,13 +20,17 @@ mkdir build
 cd build
 
 : "${PLATFORM:=m2}"
-: "${CPU_SPEED:=${1:-252}}"
+: "${CPU_SPEED:=${1:-504}}"
 : "${HDMI_DRIVER:=${2:-HDMI_PIO}}"
+: "${PSRAM_SPEED:=100}"
+: "${FLASH_SPEED:=66}"
 
 cmake \
     -DPICO_PLATFORM=rp2350 \
     -DPLATFORM=${PLATFORM} \
     -DCPU_SPEED=${CPU_SPEED} \
+    -DPSRAM_SPEED=${PSRAM_SPEED} \
+    -DFLASH_SPEED=${FLASH_SPEED} \
     -DHDMI_DRIVER=${HDMI_DRIVER} \
     ..
 
