@@ -35,10 +35,15 @@ static void ensure_table(void) {
 static int is_dsk(const char *name) {
     size_t n = strlen(name);
     if (n < 5) return 0;
-    return (name[n-4] == '.')
-        && (tolower((unsigned char)name[n-3]) == 'd')
-        && (tolower((unsigned char)name[n-2]) == 's')
-        && (tolower((unsigned char)name[n-1]) == 'k');
+    if (name[n-4] != '.') return 0;
+    char e1 = tolower((unsigned char)name[n-3]);
+    char e2 = tolower((unsigned char)name[n-2]);
+    char e3 = tolower((unsigned char)name[n-1]);
+    /* .dsk */
+    if (e1 == 'd' && e2 == 's' && e3 == 'k') return 1;
+    /* .ipf */
+    if (e1 == 'i' && e2 == 'p' && e3 == 'f') return 1;
+    return 0;
 }
 
 static int is_tape(const char *name) {
@@ -54,8 +59,28 @@ static int is_tape(const char *name) {
     return 0;
 }
 
+static int is_cpr(const char *name) {
+    size_t n = strlen(name);
+    if (n < 5) return 0;
+    if (name[n-4] != '.') return 0;
+    char e1 = tolower((unsigned char)name[n-3]);
+    char e2 = tolower((unsigned char)name[n-2]);
+    char e3 = tolower((unsigned char)name[n-1]);
+    return (e1 == 'c' && e2 == 'p' && e3 == 'r');
+}
+
+static int is_ipf(const char *name) {
+    size_t n = strlen(name);
+    if (n < 5) return 0;
+    if (name[n-4] != '.') return 0;
+    char e1 = tolower((unsigned char)name[n-3]);
+    char e2 = tolower((unsigned char)name[n-2]);
+    char e3 = tolower((unsigned char)name[n-1]);
+    return (e1 == 'i' && e2 == 'p' && e3 == 'f');
+}
+
 static int is_media(const char *name) {
-    return is_dsk(name) || is_tape(name);
+    return is_dsk(name) || is_tape(name) || is_cpr(name);
 }
 
 static cpc_filter_t g_filter = CPC_FILTER_DISK;
@@ -66,9 +91,10 @@ void cpc_disk_set_filter(cpc_filter_t filter) {
 
 static int matches_filter(const char *name) {
     switch (g_filter) {
-        case CPC_FILTER_DISK: return is_dsk(name);
-        case CPC_FILTER_TAPE: return is_tape(name);
-        default:              return is_media(name);
+        case CPC_FILTER_DISK:      return is_dsk(name);
+        case CPC_FILTER_TAPE:      return is_tape(name);
+        case CPC_FILTER_CARTRIDGE: return is_cpr(name);
+        default:                   return is_media(name);
     }
 }
 
@@ -225,4 +251,12 @@ void cpc_disk_autoload(void) {
 
 int cpc_is_tape_file(const char *name) {
     return is_tape(name);
+}
+
+int cpc_is_cpr_file(const char *name) {
+    return is_cpr(name);
+}
+
+int cpc_is_ipf_file(const char *name) {
+    return is_ipf(name);
 }

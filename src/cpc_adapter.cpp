@@ -11,6 +11,7 @@
  */
 
 #include "cpc_adapter.h"
+#include "cpc_ipf.h"
 
 #include "cap32/cap32.h"
 #include "cap32/crtc.h"
@@ -27,6 +28,7 @@ extern "C" {
 #include "psram_allocator.h"
 #include "ff.h"
 #include "pico/time.h"
+#include "Pico/cpc_loader.h"
 }
 
 /* ------------------------------------------------------------------ */
@@ -276,6 +278,11 @@ static int load_dsk(t_drive *drive, const char *path) {
 }
 
 static void eject_dsk(t_drive *drive) {
+    /* Call IPF eject hook if set (cleans up CAPS state) */
+    if (drive->eject_hook) {
+        drive->eject_hook(drive);
+    }
+
     for (unsigned int t = 0; t < DSK_TRACKMAX; t++) {
         for (unsigned int s = 0; s < DSK_SIDEMAX; s++) {
             t_track *trk = &drive->track[t][s];
@@ -588,7 +595,14 @@ uint8_t *cpc_get_keyboard_matrix(void) {
 int cpc_disk_insert(int drive, const char *path) {
     t_drive *d = (drive == 0) ? &driveA : &driveB;
     eject_dsk(d);
-    int rc = load_dsk(d, path);
+
+    int rc;
+    if (cpc_is_ipf_file(path)) {
+        rc = cpc_ipf_load(path, d);
+    } else {
+        rc = load_dsk(d, path);
+    }
+
     if (rc == 0) {
         printf("cpc_adapter: disk %c: %s\n", 'A' + drive, path);
     }

@@ -51,6 +51,12 @@ int cpc_tape_get_motor(void);
 int cpc_tape_get_level(void);
 void cpc_tape_rewind(void);
 
+/* Cartridge operations (.cpr). Returns 0 on success. */
+int cpc_cartridge_insert(const char *path);
+void cpc_cartridge_eject(void);
+int cpc_cartridge_is_loaded(void);
+const char *cpc_cartridge_filename(void);
+
 /* Snapshot operations. Returns 0 on success. */
 int cpc_snapshot_save(const char *path);
 int cpc_snapshot_load(const char *path);

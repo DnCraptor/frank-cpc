@@ -334,6 +334,33 @@ set(CAP32_ENGINE
     src/cap32/disk.cpp
     src/cap32/tape.cpp
     src/cpc_adapter.cpp
+    src/cpc_cartridge.cpp
+    src/cpc_ipf.cpp
+)
+
+# capsimg library (CAPS/IPF disk image support)
+set(CAPSIMG_SOURCES
+    src/capsimg/Core/BitBuffer.cpp
+    src/capsimg/Core/BaseFile.cpp
+    src/capsimg/Core/CRC.cpp
+    src/capsimg/Core/DiskFile.cpp
+    src/capsimg/Core/MemoryFile.cpp
+    src/capsimg/Codec/CTRawCodec.cpp
+    src/capsimg/Codec/CTRawCodecDecompressor.cpp
+    src/capsimg/Codec/DiskEncoding.cpp
+    src/capsimg/CAPSImg/CAPSImg.cpp
+    src/capsimg/CAPSImg/CapsAPI.cpp
+    src/capsimg/CAPSImg/CapsFile.cpp
+    src/capsimg/CAPSImg/CapsFDCEmulator.cpp
+    src/capsimg/CAPSImg/CapsFormatMFM.cpp
+    src/capsimg/CAPSImg/CapsImage.cpp
+    src/capsimg/CAPSImg/CapsImageStd.cpp
+    src/capsimg/CAPSImg/CapsLoader.cpp
+    src/capsimg/CAPSImg/DiskImage.cpp
+    src/capsimg/CAPSImg/DiskImageFactory.cpp
+    src/capsimg/CAPSImg/StreamCueImage.cpp
+    src/capsimg/CAPSImg/StreamImage.cpp
+    src/capsimg/CAPSImg/stdafx.cpp
 )
 
 set(CPC_PLATFORM
@@ -360,6 +387,7 @@ set(CPC_STUBS
 
 add_executable(frank-cpc
     ${CAP32_ENGINE}
+    ${CAPSIMG_SOURCES}
     ${CPC_PLATFORM}
     ${PICO_PORT}
     ${CPC_STUBS}
@@ -369,6 +397,11 @@ target_include_directories(frank-cpc PRIVATE
     src
     src/cap32
     src/Pico
+    src/capsimg/Core
+    src/capsimg/CAPSImg
+    src/capsimg/Codec
+    src/capsimg/LibIPF
+    src/capsimg/Device
     drivers
     drivers/pwm_audio
     drivers/fatfs
@@ -432,6 +465,12 @@ set_source_files_properties(
     src/cap32/cap32.cpp
     src/cpc_adapter.cpp
     PROPERTIES COMPILE_FLAGS "-O3"
+)
+
+# capsimg library: suppress warnings from legacy code
+set_source_files_properties(${CAPSIMG_SOURCES}
+    PROPERTIES COMPILE_FLAGS
+    "-Wno-old-style-cast -Wno-zero-as-null-pointer-constant -Wno-parentheses -Wno-reorder -Wno-class-memaccess -Wno-narrowing -Wno-missing-field-initializers -Wno-delete-non-virtual-dtor"
 )
 
 target_link_libraries(frank-cpc
