@@ -22,6 +22,7 @@
 #include "cpc_loader.h"
 #include "cpc_autotype.h"
 #include "cpc_tape_loader.h"
+#include "cpc_serial_console.h"
 #include "tape.h"
 #include "nespad.h"
 #include "crash_handler.h"
@@ -582,6 +583,7 @@ void cpc_pico_main(void) {
 
         cpc_engine_run_frame();
         cpc_frame_present();
+        cpc_serial_poll();
         cpc_frame_sync();
     }
 }

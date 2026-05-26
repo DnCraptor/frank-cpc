@@ -1,5 +1,11 @@
 #include "stdafx.h"
 
+#ifdef PICO_BUILD
+extern "C" {
+#include "psram_allocator.h"
+}
+#endif
+
 
 
 // fm tables
@@ -296,9 +302,17 @@ void CDiskEncoding::InitMFM(uint32_t mfmsize)
 		return;
 
 	// clear tables
+#ifdef PICO_BUILD
+	psram_free(mfmcode);
+#else
 	delete [] mfmcode;
+#endif
 	mfmcode=NULL;
+#ifdef PICO_BUILD
+	psram_free(mfmdecode);
+#else
 	delete [] mfmdecode;
+#endif
 	mfmdecode=NULL;
 
 	mfminit=0;
@@ -309,8 +323,13 @@ void CDiskEncoding::InitMFM(uint32_t mfmsize)
 		return;
 
 	// create tables
+#ifdef PICO_BUILD
+	mfmcode=(uint32_t *)psram_malloc(mfmsize * sizeof(uint32_t));
+	mfmdecode=(uint32_t *)psram_malloc(mfmsize * sizeof(uint32_t));
+#else
 	mfmcode=new uint32_t[mfmsize];
 	mfmdecode=new uint32_t[mfmsize];
+#endif
 
 	// code only ever uses 8 or 16 bit indexing
 	mfmcodebit=(mfmsize > 0x100) ? 16 : 8;

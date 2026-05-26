@@ -219,18 +219,17 @@ static int load_dsk(t_drive *drive, const char *path) {
     drive->tracks = dsk_header.tracks;
     if (drive->tracks > DSK_TRACKMAX)
         drive->tracks = DSK_TRACKMAX;
-    drive->sides = dsk_header.sides;
-    if (drive->sides > DSK_SIDEMAX)
-        drive->sides = DSK_SIDEMAX;
+    unsigned int num_sides = dsk_header.sides;
+    if (num_sides > DSK_SIDEMAX)
+        num_sides = DSK_SIDEMAX;
     /* FDC uses zero-based side count: 0 = single-sided, 1 = double-sided */
-    if (drive->sides > 0)
-        drive->sides--;
+    drive->sides = (num_sides > 0) ? num_sides - 1 : 0;
 
     for (unsigned int t = 0; t < drive->tracks; t++) {
-        for (unsigned int s = 0; s <= drive->sides; s++) {
+        for (unsigned int s = 0; s < num_sides; s++) {
             dword track_size;
             if (is_extended) {
-                track_size = ((dword)dsk_header.track_size[t * drive->sides + s]) * 256;
+                track_size = ((dword)dsk_header.track_size[t * num_sides + s]) * 256;
             } else {
                 /* Standard DSK: track size is at file offset 0x32–0x33,
                    which maps to the unused2[] field in the struct. */

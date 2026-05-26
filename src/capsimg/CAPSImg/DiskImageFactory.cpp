@@ -4,8 +4,10 @@
 
 CDiskImageFactory::CDiskImageFactory()
 {
+#ifndef PICO_BUILD
 	// dummy objects to initialize static variables
 	CCapsImage img;
+#endif
 }
 
 CDiskImageFactory::~CDiskImageFactory()
