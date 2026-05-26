@@ -217,11 +217,17 @@ static int load_dsk(t_drive *drive, const char *path) {
     int is_extended = (std::memcmp(dsk_header.id, "EXTENDED", 8) == 0);
 
     drive->tracks = dsk_header.tracks;
+    if (drive->tracks > DSK_TRACKMAX)
+        drive->tracks = DSK_TRACKMAX;
     drive->sides = dsk_header.sides;
-    if (drive->sides == 0) drive->sides = 1;
+    if (drive->sides > DSK_SIDEMAX)
+        drive->sides = DSK_SIDEMAX;
+    /* FDC uses zero-based side count: 0 = single-sided, 1 = double-sided */
+    if (drive->sides > 0)
+        drive->sides--;
 
     for (unsigned int t = 0; t < drive->tracks; t++) {
-        for (unsigned int s = 0; s < drive->sides; s++) {
+        for (unsigned int s = 0; s <= drive->sides; s++) {
             dword track_size;
             if (is_extended) {
                 track_size = ((dword)dsk_header.track_size[t * drive->sides + s]) * 256;
