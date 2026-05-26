@@ -27,7 +27,6 @@ extern "C" {
 #include "board_config.h"
 #include "psram_allocator.h"
 #include "ff.h"
-#include "pico/time.h"
 #include "Pico/cpc_loader.h"
 }
 
@@ -227,7 +226,9 @@ static int load_dsk(t_drive *drive, const char *path) {
             if (is_extended) {
                 track_size = ((dword)dsk_header.track_size[t * drive->sides + s]) * 256;
             } else {
-                track_size = dsk_header.track_size[0] | ((dword)dsk_header.track_size[1] << 8);
+                /* Standard DSK: track size is at file offset 0x32–0x33,
+                   which maps to the unused2[] field in the struct. */
+                track_size = dsk_header.unused2[0] | ((dword)dsk_header.unused2[1] << 8);
             }
             if (track_size == 0) continue;
 
@@ -540,11 +541,6 @@ void cpc_engine_reset(void) {
 
 void cpc_engine_run_frame(void) {
     int exit_code;
-    static int profile_counter = 0;
-    static uint64_t accum_z80_us = 0;
-    static int snd_buf_count = 0;
-
-    absolute_time_t t0 = get_absolute_time();
 
     /* Reset scanline buffer for new frame */
     CPC.scr_base = scanline_buf;
@@ -554,25 +550,10 @@ void cpc_engine_run_frame(void) {
         exit_code = z80_execute();
 
         if (exit_code == EC_SOUND_BUFFER) {
-            snd_buf_count++;
             flush_audio();
             audio_ring_push_stereo(audio_out_buf, audio_out_count);
         }
     } while (exit_code != EC_FRAME_COMPLETE);
-
-    absolute_time_t t1 = get_absolute_time();
-
-    accum_z80_us += absolute_time_diff_us(t0, t1);
-    profile_counter++;
-    if (profile_counter >= 50) {
-        printf("PROFILE: frame=%llu us, snd_bufs=%d, snd_en=%d, bufptr_off=%d\n",
-               accum_z80_us / 50, snd_buf_count,
-               (int)CPC.snd_enabled,
-               (int)(CPC.snd_bufferptr - pbSndBuffer));
-        accum_z80_us = 0;
-        profile_counter = 0;
-        snd_buf_count = 0;
-    }
 }
 
 void cpc_key_matrix_set(int row, int bit, int pressed) {

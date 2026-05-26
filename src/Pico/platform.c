@@ -562,9 +562,6 @@ void cpc_pico_main(void) {
 
     printf("CPC initialized. Starting emulation...\n");
 
-    uint32_t frame_count = 0;
-    absolute_time_t fps_timer = get_absolute_time();
-
     while (1) {
         crash_handler_feed();
         cpc_ps2_feed_events();
@@ -586,15 +583,5 @@ void cpc_pico_main(void) {
         cpc_engine_run_frame();
         cpc_frame_present();
         cpc_frame_sync();
-
-        frame_count++;
-        absolute_time_t now = get_absolute_time();
-        int64_t elapsed_us = absolute_time_diff_us(fps_timer, now);
-        if (elapsed_us >= 2000000) { /* every 2 seconds */
-            uint32_t fps_x10 = (uint32_t)(frame_count * 10000000ULL / elapsed_us);
-            printf("heartbeat: %u.%u fps\n", fps_x10 / 10, fps_x10 % 10);
-            frame_count = 0;
-            fps_timer = now;
-        }
     }
 }
