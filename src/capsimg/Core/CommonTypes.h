@@ -2,9 +2,15 @@
 #define COMMONTYPES_H
 
 #ifndef WINDOWS
+#ifndef BYTE
 typedef int8_t BYTE;
+#endif
+#ifndef WORD
 typedef int16_t WORD;
+#endif
+#ifndef DWORD
 typedef int32_t DWORD;
+#endif
 #endif
 
 typedef void *PVOID;

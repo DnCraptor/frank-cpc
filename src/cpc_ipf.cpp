@@ -20,10 +20,16 @@
 
 extern "C" {
 #include "psram_allocator.h"
-#include "ff.h"
+/* FatFS I/O is in cpc_ipf_io.c to avoid type conflicts */
+uint8_t *ipf_read_file(const char *path, size_t *out_size);
 }
 
-/* capsimg library API — include only what's needed */
+/* capsimg library API.
+ * Must define __cdecl before CapsLibAll.h since CapsFDC.h uses it
+ * and stdafx.h (which defines it) is included later in the chain. */
+#ifndef __cdecl
+#define __cdecl
+#endif
 #include "capsimg/LibIPF/CapsLibAll.h"
 
 /* ------------------------------------------------------------------ */
@@ -268,32 +274,12 @@ int cpc_ipf_load(const char *path, t_drive *drive) {
         }
     }
 
-    /* Read entire IPF file into PSRAM */
-    FIL f;
-    if (f_open(&f, path, FA_READ) != FR_OK) {
-        printf("ipf: cannot open %s\n", path);
-        return -1;
-    }
+    /* Read entire IPF file into PSRAM via FatFS */
+    size_t file_size = 0;
+    byte *file_buf = ipf_read_file(path, &file_size);
+    if (!file_buf) return -1;
 
-    FSIZE_t file_size = f_size(&f);
-    if (file_size == 0 || file_size > 4 * 1024 * 1024) {
-        printf("ipf: file too large or empty (%lu)\n", (unsigned long)file_size);
-        f_close(&f);
-        return -1;
-    }
-
-    byte *file_buf = (byte *)psram_malloc((size_t)file_size);
-    if (!file_buf) {
-        printf("ipf: PSRAM alloc failed for %lu bytes\n", (unsigned long)file_size);
-        f_close(&f);
-        return -1;
-    }
-
-    UINT br;
-    f_read(&f, file_buf, (UINT)file_size, &br);
-    f_close(&f);
-
-    if (br < 4 || std::memcmp(file_buf, "CAPS", 4) != 0) {
+    if (file_size < 4 || std::memcmp(file_buf, "CAPS", 4) != 0) {
         printf("ipf: not a CAPS/IPF file\n");
         psram_free(file_buf);
         return -1;
@@ -387,3 +373,8 @@ int cpc_ipf_load(const char *path, t_drive *drive) {
            drive->tracks, drive->sides);
     return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* FatFS file I/O wrapper — isolated to avoid BYTE/WORD/DWORD         */
+/* typedef conflicts between ff.h and capsimg CommonTypes.h.           */
+/* end of cpc_ipf.cpp */

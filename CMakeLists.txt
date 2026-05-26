@@ -336,6 +336,7 @@ set(CAP32_ENGINE
     src/cpc_adapter.cpp
     src/cpc_cartridge.cpp
     src/cpc_ipf.cpp
+    src/cpc_ipf_io.c
 )
 
 # capsimg library (CAPS/IPF disk image support)

@@ -33,7 +33,9 @@ typedef const char *LPCTSTR;
 // Stub dirent — not used when loading via memory buffer
 struct dirent { char d_name[256]; unsigned char d_type; unsigned short d_reclen; };
 #define DT_REG 8
+#ifndef FF_DEFINED   /* FatFS defines its own DIR */
 typedef struct { int _dummy; } DIR;
+#endif
 static inline DIR *opendir(const char *) { return NULL; }
 static inline struct dirent *readdir(DIR *) { return NULL; }
 static inline int closedir(DIR *) { return 0; }
