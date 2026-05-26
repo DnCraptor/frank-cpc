@@ -35,8 +35,10 @@
 #include "cpc_adapter.h"
 #include "cpc_autotype.h"
 #include "cpc_loader.h"
+#include "crash_handler.h"
 
 #include "pico/stdlib.h"
+#include "hardware/structs/watchdog.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -83,7 +85,12 @@ static void cmd_reset(void) {
 }
 
 static void cmd_status(void) {
-    printf("OK ALIVE\n");
+    printf("OK ALIVE scratch0=0x%08lX scratch1=0x%08lX scratch2=0x%08lX scratch3=0x%08lX wdog_ctrl=0x%08lX\n",
+           (unsigned long)watchdog_hw->scratch[0],
+           (unsigned long)watchdog_hw->scratch[1],
+           (unsigned long)watchdog_hw->scratch[2],
+           (unsigned long)watchdog_hw->scratch[3],
+           (unsigned long)watchdog_hw->ctrl);
 }
 
 static void cmd_disk(const char *args) {
@@ -256,6 +263,9 @@ static void cmd_cd(const char *args) {
 
 static void dispatch_command(const char *line) {
     const char *p;
+
+    /* Feed watchdog before potentially long operations (disk load, etc.) */
+    crash_handler_feed();
 
     if ((p = match_prefix(line, "PING")))        { cmd_ping(); }
     else if ((p = match_prefix(line, "HELP")))    { cmd_help(); }

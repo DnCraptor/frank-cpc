@@ -117,7 +117,7 @@ void crash_handler_install(void) {
      * when the same hang recurs on every boot. */
     if (watchdog_hw->scratch[0] != CRASH_SENT) {
         watchdog_hw->scratch[0] = HANG_MAGIC;
-        watchdog_enable(8000, true);  /* 8 second timeout, pause on debug */
+        watchdog_enable(16000, true);  /* 16 second timeout, pause on debug */
     }
 }
 

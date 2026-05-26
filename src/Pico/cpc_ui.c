@@ -17,6 +17,7 @@
 #include "tape_rec.h"
 #include "ui_draw.h"
 #include "board_config.h"
+#include "crash_handler.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -136,6 +137,7 @@ static void open_browser_for(int drv) {
         cpc_disk_set_filter(CPC_FILTER_TAPE);
     else
         cpc_disk_set_filter(CPC_FILTER_DISK);
+    crash_handler_feed();
     cpc_disk_rescan();
     s_state = UI_DISK_BROWSER;
 }
@@ -358,6 +360,7 @@ static bool handle_disk_browser_key(unsigned int ks) {
                 } else {
                     char path[CPC_DISK_PATH_LEN];
                     cpc_disk_entry_path(ei, path, sizeof(path));
+                    crash_handler_feed();
                     if (cpc_is_tape_file(g_cpc_disk_entries[ei].name)) {
                         /* Tape file → mount as tape */
                         if (cpc_mount_tape(path) == 0) {

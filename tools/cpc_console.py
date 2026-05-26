@@ -42,25 +42,66 @@ class CPCConsole:
     """Control a frank-cpc board over USB serial."""
 
     def __init__(self, port=None, baudrate=115200, timeout=2.0):
+        self._port = port
+        self._baudrate = baudrate
+        self._timeout = timeout
+        self._connect()
+
+    def _connect(self):
+        port = self._port
         if port is None:
             port = find_cpc_port()
             if port is None:
                 raise RuntimeError("No CPC USB serial port found")
-        self.ser = serial.Serial(port, baudrate, timeout=timeout)
+        self.ser = serial.Serial(port, self._baudrate, timeout=self._timeout)
         # Drain any boot messages
         time.sleep(0.2)
         self.ser.reset_input_buffer()
 
+    def _reconnect(self, max_wait=20):
+        """Wait for the device to reappear after a reset and reconnect."""
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+        # Wait for port to disappear and reappear
+        for i in range(max_wait * 2):
+            time.sleep(0.5)
+            port = self._port or find_cpc_port()
+            if port:
+                try:
+                    self.ser = serial.Serial(port, self._baudrate, timeout=self._timeout)
+                    time.sleep(0.5)
+                    self.ser.reset_input_buffer()
+                    return True
+                except Exception:
+                    continue
+        return False
+
     def close(self):
         self.ser.close()
 
-    def send(self, command, timeout=5.0):
-        """Send a command and return (ok, payload).
+    def send(self, command, timeout=5.0, retries=2):
+        """Send a command and return (ok, payload, comments).
 
         ok: True if response starts with 'OK', False if 'ERR'.
         payload: the rest of the line after OK/ERR.
         Also collects any '#' comment lines as extra info.
+        Auto-reconnects on serial errors.
         """
+        for attempt in range(retries + 1):
+            try:
+                return self._send_once(command, timeout)
+            except (serial.SerialException, OSError) as e:
+                if attempt < retries:
+                    print(f"# Serial error: {e}, reconnecting...")
+                    if self._reconnect():
+                        # Wait for CPC to boot after reset
+                        time.sleep(8)
+                        continue
+                raise
+
+    def _send_once(self, command, timeout):
         self.ser.reset_input_buffer()
         self.ser.write((command.strip() + "\r\n").encode())
         self.ser.flush()
@@ -148,8 +189,11 @@ class CPCConsole:
         return self.cmd("CART STATUS")
 
     def type_text(self, text):
-        """Type text into the CPC. Use \\r for Enter, \\n for 10s pause."""
-        return self.cmd(f"TYPE {text}")
+        """Type text into the CPC. Use \\r for Enter, \\n for 10s pause.
+        Python \\r and \\n are auto-escaped for the wire protocol."""
+        # Escape so firmware cmd_type sees literal \r and \n
+        wire = text.replace('\r', '\\r').replace('\n', '\\n')
+        return self.cmd(f"TYPE {wire}")
 
     def key_press(self, row, bit):
         return self.cmd(f"KEY {row} {bit} PRESS")
@@ -173,6 +217,18 @@ class CPCConsole:
     def wait_frames(self, n):
         """Wait for n frames (at 50fps)."""
         time.sleep(n / 50.0)
+
+    @staticmethod
+    def capture_screen(output_path, device="0", size="640x480"):
+        """Capture a frame from USB Video capture card."""
+        import subprocess
+        result = subprocess.run(
+            ["ffmpeg", "-f", "avfoundation", "-framerate", "30",
+             "-video_size", size, "-i", device,
+             "-frames:v", "1", "-update", "1", "-y", output_path],
+            capture_output=True, text=True, timeout=10
+        )
+        return result.returncode == 0
 
 
 def interactive(cpc):
