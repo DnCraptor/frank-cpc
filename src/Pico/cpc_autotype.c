@@ -82,6 +82,21 @@ static cpc_keymap_t ascii_to_cpc(unsigned int ks) {
         case 0xff0d:
             k.row=2; k.bit=2; break;
         case '"': k.row=8; k.bit=1; k.shift=1; break; /* Shift+2 */
+        case '|': k.row=3; k.bit=2; k.shift=1; break; /* Shift+@ */
+        case '@': k.row=3; k.bit=2; break;
+        case '-': k.row=3; k.bit=1; break;
+        case '.': k.row=3; k.bit=7; break;
+        case ',': k.row=4; k.bit=7; break;
+        case ';': k.row=3; k.bit=5; break;
+        case ':': k.row=3; k.bit=4; break;
+        case '/': k.row=3; k.bit=6; break;
+        case '!': k.row=8; k.bit=0; k.shift=1; break; /* Shift+1 */
+        case '?': k.row=3; k.bit=6; k.shift=1; break; /* Shift+/ */
+        case '(': k.row=5; k.bit=0; k.shift=1; break; /* Shift+8 */
+        case ')': k.row=4; k.bit=1; k.shift=1; break; /* Shift+9 */
+        case '=': k.row=3; k.bit=1; k.shift=1; break; /* Shift+- */
+        case '+': k.row=3; k.bit=4; k.shift=1; break; /* Shift+; (actually Shift+: on CPC layout) */
+        case '*': k.row=3; k.bit=5; k.shift=1; break; /* Shift+: (actually Shift+; on CPC layout) */
         default: break;
     }
     return k;

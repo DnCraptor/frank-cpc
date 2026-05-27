@@ -26,6 +26,7 @@
 extern "C" {
 #include "board_config.h"
 #include "psram_allocator.h"
+#include "crash_handler.h"
 #include "ff.h"
 #include "Pico/cpc_loader.h"
 }
@@ -227,6 +228,7 @@ static int load_dsk(t_drive *drive, const char *path) {
 
     for (unsigned int t = 0; t < drive->tracks; t++) {
         for (unsigned int s = 0; s < num_sides; s++) {
+            crash_handler_feed();
             dword track_size;
             if (is_extended) {
                 track_size = ((dword)dsk_header.track_size[t * num_sides + s]) * 256;
@@ -558,6 +560,7 @@ void cpc_engine_run_frame(void) {
             flush_audio();
             audio_ring_push_stereo(audio_out_buf, audio_out_count);
         }
+        crash_handler_feed();
     } while (exit_code != EC_FRAME_COMPLETE);
 }
 
