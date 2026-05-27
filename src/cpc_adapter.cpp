@@ -376,13 +376,15 @@ void __attribute__((section(".time_critical.adapter"))) scanline_complete(int sc
         dst[i+4] = e; dst[i+5] = f; dst[i+6] = g; dst[i+7] = h;
     }
 
-    /* Simulate CRT overscan: hide the leftmost pixel by duplicating the
-     * second pixel into it. On a real CPC monitor, the first active display
-     * pixel falls in the overscan area hidden by the CRT bezel. Some CPC Plus
-     * games leave non-black content there (e.g., Robocop 2 with R2=45).
-     * We can't write a fixed value (e.g., 0) because palette index 0 varies
-     * by game — it's grey on the BASIC screen, black in some games, etc. */
-    ((uint8_t *)dst)[0] = ((uint8_t *)dst)[1];
+    /* Hide leftmost overscan pixel only when the active display starts
+     * later than the standard position (offset > 32).  CPC Plus games with
+     * non-standard R2 (e.g., Robocop 2 R2=45, offset=40) leave stale
+     * content at x=0 that would be hidden by a real CRT bezel.
+     * Standard CPC (offset=32) has legitimate content at x=0 (e.g., the
+     * "R" in "Ready") so we must not touch it. */
+    if (crtc_active_display_offset > 32) {
+        ((uint8_t *)dst)[0] = ((uint8_t *)dst)[1];
+    }
 }
 
 /* Legacy render_frame_to_fb — no longer needed since we render per-scanline.
