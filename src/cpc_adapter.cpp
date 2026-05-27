@@ -364,10 +364,15 @@ void __attribute__((section(".time_critical.adapter"))) scanline_complete(int sc
     if (!scanline_render_target) return;
     dbg_scanline_rendered++;
 
-    const uint32_t *src = (const uint32_t *)(scanline_buf + 32);
+    /* Use dynamic active display offset instead of hardcoded 32.
+     * crtc_active_display_offset tracks where the CRTC renderer starts
+     * writing active display bytes in scanline_buf, adapting to different
+     * CRTC timing (e.g., R2=46 → offset 32, R2=45 → offset 40). */
+    extern int crtc_active_display_offset;
+    const uint32_t *src = (const uint32_t *)(scanline_buf + crtc_active_display_offset);
     uint32_t *dst = (uint32_t *)(scanline_render_target + fb_y * scanline_render_stride);
     /* Capture first pixel value for debugging */
-    dbg_last_pixel = ((const uint8_t *)(scanline_buf + 32))[0];
+    dbg_last_pixel = ((const uint8_t *)(scanline_buf + crtc_active_display_offset))[0];
     /* Copy 320 bytes = 80 words, unrolled 8× for pipeline efficiency */
     for (int i = 0; i < 80; i += 8) {
         uint32_t a = src[i], b = src[i+1], c = src[i+2], d = src[i+3];
@@ -855,13 +860,14 @@ void cpc_debug_sprite_dump(int id) {
 int cpc_debug_asic_dump(char *buf, int buflen) {
     extern uint32_t asic_rgb[32];
     extern int crtc_sl0_scrln;
+    extern int crtc_active_display_offset;
     int n = snprintf(buf, buflen,
         "model=%d locked=%d hscroll=%u vscroll=%u split_sl=%d split_addr=%04X "
-        "regPageOn=%d int_sl=%d sl0=%d fby0=%d",
+        "regPageOn=%d int_sl=%d sl0=%d fby0=%d adoff=%d",
         CPC.model, asic.locked, asic.hscroll, asic.vscroll,
         CRTC.split_sl, CRTC.split_addr,
         GateArray.registerPageOn, CRTC.interrupt_sl,
-        crtc_sl0_scrln, fb_y_start);
+        crtc_sl0_scrln, fb_y_start, crtc_active_display_offset);
     /* Dump all 32 palette RGB values */
     n += snprintf(buf + n, buflen - n, "\nPAL:");
     for (int i = 0; i < 32 && n < buflen - 10; i++) {

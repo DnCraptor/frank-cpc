@@ -601,6 +601,7 @@ inline void reload_addr()
 
 
 int crtc_sl0_scrln = 0; /* VDU.scrln when sl_count resets to 0 */
+int crtc_active_display_offset = 32; /* byte offset in scanline_buf where active display starts */
 
 inline void restart_frame()
 {
@@ -821,6 +822,11 @@ void set_prerender()
    LastPreRend = flags1.combined;
    if (LastPreRend == 0x03ff0000) {
       PreRender = CPC.scr_prerendernorm;
+      /* Record where active display starts in scanline buffer.
+       * This is used by scanline_complete() to copy from the correct position,
+       * aligning fb column 0 with sprite X=0. Align to 4 bytes for uint32_t copy. */
+      extern int crtc_active_display_offset;
+      crtc_active_display_offset = (int)(CPC.scr_pos - CPC.scr_base) & ~3;
    } else {
       if (!static_cast<word>(LastPreRend)) {
          PreRender = CPC.scr_prerenderbord;

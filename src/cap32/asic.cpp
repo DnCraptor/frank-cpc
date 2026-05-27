@@ -466,7 +466,10 @@ void asic_draw_sprites() {
     * Sprite Y is relative to CRTC sl_count=0 (frame restart).
     * crtc_sl0_scrln records VDU.scrln at that moment.
     * fb row = (sprite_y + crtc_sl0_scrln) - fb_y_start
-    * Sprite X is in CPC pixel units; our fb is half CPC horizontal resolution. */
+    *
+    * Sprite X=0 is the left edge of the active display.
+    * scanline_complete() now copies from scanline_buf + crtc_active_display_offset,
+    * so fb column 0 = active display start. No X adjustment needed. */
    const int fb_w = 320;
    const int fb_h = 240;
    const int y_offset = crtc_sl0_scrln - fb_y_start;
