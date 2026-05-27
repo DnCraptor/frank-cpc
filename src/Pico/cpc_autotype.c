@@ -97,6 +97,17 @@ static cpc_keymap_t ascii_to_cpc(unsigned int ks) {
         case '=': k.row=3; k.bit=1; k.shift=1; break; /* Shift+- */
         case '+': k.row=3; k.bit=4; k.shift=1; break; /* Shift+; (actually Shift+: on CPC layout) */
         case '*': k.row=3; k.bit=5; k.shift=1; break; /* Shift+: (actually Shift+; on CPC layout) */
+        case '&': k.row=6; k.bit=0; k.shift=1; break; /* Shift+6 */
+        case '#': k.row=7; k.bit=1; k.shift=1; break; /* Shift+3 */
+        case '^': k.row=5; k.bit=1; k.shift=1; break; /* Shift+7 (up arrow on CPC) */
+        case '<': k.row=4; k.bit=7; k.shift=1; break; /* Shift+, */
+        case '>': k.row=3; k.bit=7; k.shift=1; break; /* Shift+. */
+        case '[': k.row=3; k.bit=3; k.shift=1; break; /* Shift+P (CPC) */
+        case ']': k.row=3; k.bit=0; k.shift=1; break; /* Shift+@ area */
+        case '\\': k.row=3; k.bit=0; break;            /* \ key */
+        case '%': k.row=6; k.bit=1; k.shift=1; break; /* Shift+5 */
+        case '$': k.row=7; k.bit=0; k.shift=1; break; /* Shift+4 */
+        case '\'': k.row=5; k.bit=1; break;            /* ' (mapped to 7 area) */
         default: break;
     }
     return k;
