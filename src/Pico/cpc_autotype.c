@@ -15,7 +15,7 @@
 
 /* Timing constants (all in 50fps frame units). */
 #define FRAMES_PER_CHAR   5   /* total time budget per character */
-#define PRESS_FRAMES      2   /* hold key pressed for this many frames */
+#define PRESS_FRAMES      4   /* hold key pressed for this many frames */
 #define FRAMES_PER_WAIT 500   /* \n = 10 second pause (no keypress)   */
 
 /* ---- state ------------------------------------------------------------- */
