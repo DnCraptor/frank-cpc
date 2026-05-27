@@ -346,7 +346,13 @@ __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair p
 
          case 1:
             GateArray.ink_values[GateArray.pen] = val & 0x1f;
-            GateArray.palette[GateArray.pen] = GateArray.ink_values[GateArray.pen];
+            if (CPC.model > 2) {
+               /* CPC Plus: identity mapping — ASIC palette is programmed
+                * directly via register page writes. */
+               GateArray.palette[GateArray.pen] = GateArray.pen;
+            } else {
+               GateArray.palette[GateArray.pen] = GateArray.ink_values[GateArray.pen];
+            }
             GateArray.palette[33] = GateArray.palette[1];
             crtc_update_palette_cache();
             break;
@@ -728,8 +734,18 @@ int video_set_palette()
       GateArray.palette[n] = 0;
    }
 
-   for (int ink = 0; ink < 17; ++ink) {
-      GateArray.palette[ink] = GateArray.ink_values[ink] & 0x1f;
+   if (CPC.model > 2) {
+      /* CPC Plus: identity palette mapping.
+       * ASIC palette entries are programmed directly via graphics_set_palette().
+       * GateArray.palette[ink] = ink so the renderer outputs the ink number
+       * as the framebuffer pixel value. */
+      for (int n = 0; n < 33; ++n) {
+         GateArray.palette[n] = n;
+      }
+   } else {
+      for (int ink = 0; ink < 17; ++ink) {
+         GateArray.palette[ink] = GateArray.ink_values[ink] & 0x1f;
+      }
    }
 
    GateArray.palette[33] = GateArray.palette[1];

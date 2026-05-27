@@ -765,10 +765,10 @@ void __attribute__((section(".time_critical.crtc"))) prerender_normal()
 }
 
 /* CPC Plus prerender with soft-scroll support (full width) */
-void prerender_normal_plus()
+void __attribute__((section(".time_critical.crtc"))) prerender_normal_plus()
 {
    unsigned int next_address = CRTC.next_address;
-   if (asic.vscroll) {
+   if (__builtin_expect(asic.vscroll != 0, 0)) {
       if (CRTC.raster_count + asic.vscroll <= (unsigned)CRTC.registers[9]) {
          next_address += asic.vscroll * 0x0800;
       } else {
@@ -776,8 +776,9 @@ void prerender_normal_plus()
          next_address -= ((CRTC.registers[9] + 1 - asic.vscroll) * 0x0800);
       }
    }
-   byte bVidMem0 = getRAMByte(next_address);
-   byte bVidMem1 = getRAMByte(next_address + 1);
+   word wVidMem = getRAMWord(next_address);
+   byte bVidMem0 = (byte)(wVidMem);
+   byte bVidMem1 = (byte)(wVidMem >> 8);
    *RendPos = *(ModeMap + (bVidMem0 * 2));
    *(RendPos + 1) = *(ModeMap + (bVidMem0 * 2) + 1);
    *(RendPos + 2) = *(ModeMap + (bVidMem1 * 2));
@@ -786,10 +787,10 @@ void prerender_normal_plus()
 }
 
 /* CPC Plus prerender with soft-scroll support (half width) */
-void prerender_normal_half_plus()
+void __attribute__((section(".time_critical.crtc"))) prerender_normal_half_plus()
 {
    unsigned int next_address = CRTC.next_address;
-   if (asic.vscroll) {
+   if (__builtin_expect(asic.vscroll != 0, 0)) {
       if (CRTC.raster_count + asic.vscroll <= (unsigned)CRTC.registers[9]) {
          next_address += asic.vscroll * 0x0800;
       } else {
@@ -797,8 +798,9 @@ void prerender_normal_half_plus()
          next_address -= ((CRTC.registers[9] + 1 - asic.vscroll) * 0x0800);
       }
    }
-   byte bVidMem0 = getRAMByte(next_address);
-   byte bVidMem1 = getRAMByte(next_address + 1);
+   word wVidMem = getRAMWord(next_address);
+   byte bVidMem0 = (byte)(wVidMem);
+   byte bVidMem1 = (byte)(wVidMem >> 8);
    *RendPos = *(ModeMap + bVidMem0);
    *(RendPos + 1) = *(ModeMap + bVidMem1);
    RendPos += 2;

@@ -289,6 +289,11 @@ static void dispatch_command(const char *line) {
     else if ((p = match_prefix(line, "CAT")))     { cmd_cat(); }
     else if ((p = match_prefix(line, "CD")))      { cmd_cd(p); }
     else if ((p = match_prefix(line, "CRTC")))    { cmd_crtc(); }
+    else if ((p = match_prefix(line, "ASIC")))    {
+        char buf[512];
+        cpc_debug_asic_dump(buf, sizeof(buf));
+        printf("OK %s\n", buf);
+    }
     else if ((p = match_prefix(line, "Z80")))     {
         char buf[320];
         cpc_debug_z80_dump(buf, sizeof(buf));

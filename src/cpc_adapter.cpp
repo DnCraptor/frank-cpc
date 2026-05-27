@@ -827,6 +827,24 @@ uint8_t cpc_debug_read_mem(uint16_t addr) {
     return z80_read_mem(addr);
 }
 
+int cpc_debug_asic_dump(char *buf, int buflen) {
+    int n = snprintf(buf, buflen,
+        "model=%d locked=%d hscroll=%u vscroll=%u split_sl=%d split_addr=%04X "
+        "regPageOn=%d int_sl=%d",
+        CPC.model, asic.locked, asic.hscroll, asic.vscroll,
+        CRTC.split_sl, CRTC.split_addr,
+        GateArray.registerPageOn, CRTC.interrupt_sl);
+    /* Append active sprites */
+    for (int i = 0; i < 16 && n < buflen - 40; i++) {
+        if (asic.sprites_mag_x[i] > 0 && asic.sprites_mag_y[i] > 0) {
+            n += snprintf(buf + n, buflen - n, " S%d(%d,%d)m%dx%d",
+                i, asic.sprites_x[i], asic.sprites_y[i],
+                asic.sprites_mag_x[i], asic.sprites_mag_y[i]);
+        }
+    }
+    return n;
+}
+
 void cpc_debug_write_mem(uint16_t addr, uint8_t val) {
     z80_write_mem(addr, val);
 }

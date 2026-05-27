@@ -77,6 +77,9 @@ uint8_t cpc_get_border_ink(void);
  * buf (at most buflen bytes).  Returns number of bytes written. */
 int cpc_debug_crtc_dump(char *buf, int buflen);
 
+/* Debug: dump ASIC state. */
+int cpc_debug_asic_dump(char *buf, int buflen);
+
 /* Debug: dump Z80 register state. */
 int cpc_debug_z80_dump(char *buf, int buflen);
 

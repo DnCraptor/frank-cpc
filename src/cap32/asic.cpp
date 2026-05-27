@@ -384,13 +384,11 @@ void asic_draw_sprites() {
    if (!scanline_render_target) return;
 
    /* CPC Plus sprite coordinate system:
-    * X=0,Y=0 is top-left of border area.
-    * The visible bitmap area starts at borderWidth, borderHeight.
-    * In frank-cpc, the framebuffer is 320x240 starting from the
-    * visible area (no border rendered). So sprite coordinates
-    * need to be offset relative to the visible area start. */
-   const int borderWidth = 64 + (asic.extend_border ? 16 : 0);
-   const int borderHeight = 40 + 8 * (30 - CRTC.registers[7]);
+    * X=0,Y=0 is the top-left of the visible screen area.
+    * In caprice32, sprites are drawn with sx += borderWidth because
+    * their framebuffer includes the border. In frank-cpc, the
+    * framebuffer starts at the visible area, so we just divide X by 2
+    * (sprite X is in half-mode-0-pixels = 2 framebuffer pixels per unit). */
    const int fb_w = 320;
    const int fb_h = 240;
 
@@ -404,11 +402,11 @@ void asic_draw_sprites() {
       if (my == 0) continue;
 
       /* Convert from CPC Plus coordinate space to framebuffer space.
-       * CPC Plus uses MODE 1 pixel coordinates (320px wide visible).
-       * Sprite X is in half-MODE-0 pixels (2x MODE 1 pixels per unit).
-       * We halve the X coordinate to map to our 320px framebuffer. */
-      int fbx = (sx - borderWidth) / 2;
-      int fby = sy - borderHeight;
+       * Sprite X is in half-MODE-0 pixels (= mode 1 pixels).
+       * Our 320px framebuffer maps 1:1 with mode 1 pixels.
+       * Sprite Y is in scanlines from the top of the visible area. */
+      int fbx = sx / 2;
+      int fby = sy;
 
       for (int x = 0; x < 16; x++) {
          for (int y = 0; y < 16; y++) {

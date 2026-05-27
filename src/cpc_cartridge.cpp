@@ -30,6 +30,7 @@ extern byte *pbROMlo;
 extern byte *pbROMhi;
 extern byte *pbExpansionROM;
 extern byte *memmap_ROM[256];
+extern t_CPC CPC;
 
 /* Cartridge state */
 static byte *cartridge_pages[CPR_MAX_PAGES] = {};
@@ -38,6 +39,7 @@ static bool  cartridge_loaded = false;
 
 /* Original ROM pointers to restore on eject */
 static byte *saved_pbROMlo = nullptr;
+static int   saved_model = 2;  /* CPC model before CPR load */
 
 /* ------------------------------------------------------------------ */
 
@@ -74,6 +76,10 @@ void cpc_cartridge_eject(void) {
 
     cartridge_path[0] = '\0';
     cartridge_loaded = false;
+
+    /* Restore original CPC model */
+    cpc_set_model(saved_model);
+
     printf("cartridge: ejected\n");
 }
 
@@ -182,6 +188,7 @@ int cpc_cartridge_insert(const char *path) {
     cartridge_loaded = true;
 
     /* CPR cartridges require CPC Plus mode (model 3) */
+    saved_model = CPC.model;
     cpc_set_model(3);
 
     printf("cartridge: loaded %s (%d pages), switching to CPC Plus mode\n", path, page_index);
