@@ -364,15 +364,10 @@ void __attribute__((section(".time_critical.adapter"))) scanline_complete(int sc
     if (!scanline_render_target) return;
     dbg_scanline_rendered++;
 
-    /* Use dynamic active display offset instead of hardcoded 32.
-     * crtc_active_display_offset tracks where the CRTC renderer starts
-     * writing active display bytes in scanline_buf, adapting to different
-     * CRTC timing (e.g., R2=46 → offset 32, R2=45 → offset 40). */
     extern int crtc_active_display_offset;
+
     const uint32_t *src = (const uint32_t *)(scanline_buf + crtc_active_display_offset);
     uint32_t *dst = (uint32_t *)(scanline_render_target + fb_y * scanline_render_stride);
-    /* Capture first pixel value for debugging */
-    dbg_last_pixel = ((const uint8_t *)(scanline_buf + crtc_active_display_offset))[0];
     /* Copy 320 bytes = 80 words, unrolled 8× for pipeline efficiency */
     for (int i = 0; i < 80; i += 8) {
         uint32_t a = src[i], b = src[i+1], c = src[i+2], d = src[i+3];
@@ -380,6 +375,14 @@ void __attribute__((section(".time_critical.adapter"))) scanline_complete(int sc
         dst[i] = a; dst[i+1] = b; dst[i+2] = c; dst[i+3] = d;
         dst[i+4] = e; dst[i+5] = f; dst[i+6] = g; dst[i+7] = h;
     }
+
+    /* Simulate CRT overscan: mask leftmost pixel.
+     * On a real CPC monitor, the first pixel of the active display falls
+     * in the overscan area hidden by the CRT bezel. Some games leave
+     * non-black content there (e.g., Robocop 2 R2=45 has pen 1 at x=0).
+     * Also handles border-only scanlines (vertical border area) where
+     * the entire buffer contains the border color. */
+    ((uint8_t *)dst)[0] = 0;
 }
 
 /* Legacy render_frame_to_fb — no longer needed since we render per-scanline.
