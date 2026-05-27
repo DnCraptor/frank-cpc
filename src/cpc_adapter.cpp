@@ -357,6 +357,12 @@ static volatile uint32_t dbg_scanline_calls = 0;
 static volatile uint32_t dbg_scanline_rendered = 0;
 static volatile uint8_t  dbg_last_pixel = 0xFF;
 
+/* Mid-frame diagnostic: capture palette_byte + pixel data at a specific scanline */
+volatile int dbg_capture_scrln = -1; /* set >0 to capture */
+byte dbg_palette_byte_snap[34];
+byte dbg_scanline_snap[64];
+volatile bool dbg_snap_ready = false;
+
 void __attribute__((section(".time_critical.adapter"))) scanline_complete(int scrln) {
     dbg_scanline_calls++;
     int fb_y = scrln - fb_y_start;
@@ -364,15 +370,24 @@ void __attribute__((section(".time_critical.adapter"))) scanline_complete(int sc
     if (!scanline_render_target) return;
     dbg_scanline_rendered++;
 
+    /* Mid-frame diagnostic capture — capture BEFORE border check */
     extern int crtc_active_display_offset;
+    if (fb_y == dbg_capture_scrln && !dbg_snap_ready) {
+        extern byte palette_byte[34];
+        memcpy(dbg_palette_byte_snap, palette_byte, 34);
+        memcpy(dbg_scanline_snap, scanline_buf + crtc_active_display_offset, 64);
+        dbg_snap_ready = true;
+    }
+
     extern int crtc_scanline_had_active;
 
     uint32_t *dst = (uint32_t *)(scanline_render_target + fb_y * scanline_render_stride);
 
-    if (!crtc_scanline_had_active) {
-        /* Border-only scanline (vertical blanking area) — fill with black
-         * to avoid flashing artifacts from palette-colored border content */
-        memset(dst, 0, 320);
+    if (!crtc_scanline_had_active && CPC.model > 2) {
+        /* CPC Plus border-only scanline — fill with true black (index 255)
+         * to hide raster palette artifacts that would flash in the vertical
+         * border area.  Standard CPC border scanlines copy normally below. */
+        memset(dst, 0xFF, 320);
         return;
     }
 
@@ -411,6 +426,8 @@ static void setup_hw_palette(void) {
     for (int i = 0; i < 32; i++) {
         graphics_set_palette((uint8_t)i, cpc_rgb_table[i]);
     }
+    /* Reserve index 255 as guaranteed black for border blanking */
+    graphics_set_palette(255, 0x000000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -877,6 +894,7 @@ int cpc_debug_asic_dump(char *buf, int buflen) {
     extern uint32_t asic_rgb[32];
     extern int crtc_sl0_scrln;
     extern int crtc_active_display_offset;
+    extern byte palette_byte[34];
     int n = snprintf(buf, buflen,
         "model=%d locked=%d hscroll=%u vscroll=%u split_sl=%d split_addr=%04X "
         "regPageOn=%d int_sl=%d sl0=%d fby0=%d adoff=%d",
@@ -884,10 +902,20 @@ int cpc_debug_asic_dump(char *buf, int buflen) {
         CRTC.split_sl, CRTC.split_addr,
         GateArray.registerPageOn, CRTC.interrupt_sl,
         crtc_sl0_scrln, fb_y_start, crtc_active_display_offset);
+    /* Dump palette_byte mapping */
+    n += snprintf(buf + n, buflen - n, "\nPB:");
+    for (int i = 0; i < 17 && n < buflen - 10; i++) {
+        n += snprintf(buf + n, buflen - n, " %d", palette_byte[i]);
+    }
     /* Dump all 32 palette RGB values */
     n += snprintf(buf + n, buflen - n, "\nPAL:");
     for (int i = 0; i < 32 && n < buflen - 10; i++) {
         n += snprintf(buf + n, buflen - n, " %06X", asic_rgb[i]);
+    }
+    /* Dump first 32 bytes of the most recent scanline_buf */
+    n += snprintf(buf + n, buflen - n, "\nSCN:");
+    for (int i = 0; i < 32 && n < buflen - 10; i++) {
+        n += snprintf(buf + n, buflen - n, " %02X", scanline_buf[crtc_active_display_offset + i]);
     }
     /* Append active sprites */
     for (int i = 0; i < 16 && n < buflen - 40; i++) {

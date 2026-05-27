@@ -50,10 +50,19 @@ uint32_t asic_rgb[32]; /* current RGB888 for each ASIC palette entry */
  * gradients. Since our 8bpp framebuffer uses indexed color, we allocate
  * a new hardware palette slot for each unique (pen, RGB) combination
  * written during the frame. Entries 0-31 = base ASIC palette,
- * 32-255 = dynamically allocated for mid-frame changes. */
+ * 32-254 = dynamically allocated for mid-frame changes (double-buffered).
+ * Double buffering: even frames use slots 32-143, odd frames use 144-254.
+ * This prevents race conditions with the DVI output, which may still
+ * be displaying the previous frame's pixels referencing old slot indices. */
 static uint32_t dynamic_rgb[256];  /* RGB for each allocated slot */
 static int dyn_next = 32;          /* next free dynamic slot */
-static uint32_t frame_start_rgb[32]; /* palette snapshot at frame start */
+static int dyn_max = 144;          /* upper limit for current frame's slots */
+static int asic_frame_parity = 0;  /* alternates 0/1 each frame */
+static uint32_t frame_first_rgb[32]; /* first color written per pen this frame */
+static bool frame_first_set[32];    /* whether first write has been captured */
+static uint8_t pen_last_slot[32];  /* last dynamic slot per pen (for overflow reuse) */
+static bool asic_palette_ever_written = false; /* true once any ASIC palette write occurs */
+static bool asic_pen_ever_written[32]; /* per-pen: has this pen EVER been written via ASIC? */
 
 extern byte palette_byte[34];
 extern uint32_t *active_halfwidth_lut;
@@ -68,6 +77,8 @@ extern "C" void asic_enable_palette_trace(void) {
 }
 
 static void asic_update_colour(int colour) {
+   asic_palette_ever_written = true;
+   asic_pen_ever_written[colour] = true;
    byte even = pbRegisterPage[0x2400 + colour * 2];
    byte odd  = pbRegisterPage[0x2400 + colour * 2 + 1];
    /* CPC Plus ASIC palette format (same as caprice32):
@@ -79,59 +90,113 @@ static void asic_update_colour(int colour) {
    uint32_t rgb = (r * 17) << 16 | (g * 17) << 8 | (b * 17);
    asic_rgb[colour] = rgb;
 
+   /* Capture the first color written for each pen this frame.
+    * This is used as the base palette for the NEXT frame's initial
+    * scanlines (before any raster effect changes kick in). */
+   if (!frame_first_set[colour]) {
+      frame_first_rgb[colour] = rgb;
+      frame_first_set[colour] = true;
+   }
+
    if (pal_trace_enabled) {
       printf("PAL pen=%d even=0x%02X odd=0x%02X R=%d G=%d B=%d rgb=0x%06X slot=%d\n",
              colour, even, odd, r, g, b, rgb, dyn_next);
    }
 
-   if (dyn_next < 251) {
+   if (dyn_next < dyn_max) {
       int idx = dyn_next++;
       dynamic_rgb[idx] = rgb;
+      graphics_set_palette((uint8_t)idx, rgb);  /* program immediately — avoids race with DVI */
+      GateArray.palette[colour] = idx;
+      palette_byte[colour] = (byte)idx;
+      pen_last_slot[colour] = (uint8_t)idx;
+      active_halfwidth_lut = nullptr;
+   } else if (pen_last_slot[colour] >= 32) {
+      /* Out of dynamic slots — reuse this pen's last slot.
+       * Only this pen's previous scanlines lose their color;
+       * other pens' dynamic slots are preserved. */
+      int idx = pen_last_slot[colour];
+      dynamic_rgb[idx] = rgb;
+      graphics_set_palette((uint8_t)idx, rgb);
       GateArray.palette[colour] = idx;
       palette_byte[colour] = (byte)idx;
       active_halfwidth_lut = nullptr;
    } else {
-      /* Out of dynamic slots — reuse the base entry (will alias) */
+      /* No dynamic slot ever allocated for this pen — use base entry */
       dynamic_rgb[colour] = rgb;
+      graphics_set_palette((uint8_t)colour, rgb);
       GateArray.palette[colour] = colour;
       palette_byte[colour] = (byte)colour;
    }
 }
 
+/* ASIC 12-bit equivalents of the 32 CPC ink values, in 0GRB nibble format.
+ * Matches CPCEC's video_asic_table[] exactly. */
+static const uint16_t ink_to_asic_grb[32] = {
+   0x666,0x666,0xF06,0xFF6,0x006,0x0F6,0x606,0x6F6,
+   0x0F6,0xFF6,0xFF0,0xFFF,0x0F0,0x0FF,0x6F0,0x6FF,
+   0x006,0xF06,0xF00,0xF0F,0x000,0x00F,0x600,0x60F,
+   0x066,0xF66,0xF60,0xF6F,0x060,0x06F,0x660,0x66F,
+};
+
+void asic_ga_palette_write(int pen, byte ink_value) {
+   /* On a real CPC Plus, GA palette writes also update the ASIC palette
+    * registers immediately — this is how raster effects work via standard
+    * GA port writes (OUT &7Fxx).  We write the 12-bit value into the
+    * register page and then call asic_update_colour() which reads it back,
+    * converts to RGB, and allocates a dynamic palette slot so the color
+    * change takes effect on the current scanline. */
+   if (pen > 16 || ink_value > 31) return;
+   uint16_t grb = ink_to_asic_grb[ink_value];
+   unsigned int r = (grb >> 4) & 0x0F;
+   unsigned int b = grb & 0x0F;
+   unsigned int g = (grb >> 8) & 0x0F;
+   /* Write to ASIC register page: even byte = (R<<4)|B, odd byte = G */
+   pbRegisterPage[0x2400 + pen * 2]     = (byte)((r << 4) | b);
+   pbRegisterPage[0x2400 + pen * 2 + 1] = (byte)g;
+   /* Now call asic_update_colour which reads from the register page,
+    * updates asic_rgb[], and allocates a dynamic palette slot. */
+   asic_update_colour(pen);
+}
+
 void asic_snapshot_palette(void) {
-   /* Save the current ASIC palette as the "start of frame" state.
-    * This is used by asic_flush_palette() to restore the initial palette
-    * for hardware slots 0-31, so the next frame starts with the correct
-    * colors before any DMA-driven raster effects kick in. */
-   memcpy(frame_start_rgb, asic_rgb, sizeof(frame_start_rgb));
+   /* Reset first-write tracking for the new frame */
+   memset(frame_first_set, 0, sizeof(frame_first_set));
 }
 
 void asic_flush_palette(void) {
-   if (pal_trace_enabled) {
-      printf("PAL FLUSH dyn_next=%d\n", dyn_next);
-      /* Dump slots 79-95 (the orange gradient section) */
-      for (int i = 79; i < dyn_next && i < 95; i++) {
-         printf("  SLOT[%d]=0x%06X\n", i, dynamic_rgb[i]);
-      }
-      if (--pal_trace_frame <= 0) pal_trace_enabled = false;
-   }
-   /* Program all base + dynamic palette entries to hardware.
-    * Base slots 0-31 use the START-of-frame values (not end-of-frame)
-    * so that the next frame's top scanlines—rendered before any DMA
-    * raster effect reprograms the palette—use the correct initial colors
-    * instead of stale end-of-frame values (e.g., white during a fade). */
+   /* If no ASIC or GA palette writes ever occurred, don't override
+    * the standard CPC hardware palette (which is set by setup_hw_palette). */
+   if (!asic_palette_ever_written) return;
+   /* Ensure index 255 stays black (reserved for border blanking) */
+   graphics_set_palette(255, 0x000000);
+   /* Program base slots 0-31 with current ASIC colors.
+    * This is safe because during the frame, all rendered pixels use dynamic
+    * slots (32+ or 144+).  No currently-displayed pixel references base slots.
+    * Sprites (drawn next) write base slot indices 17-31 directly to the
+    * framebuffer, so these MUST have the correct ASIC colors. */
    for (int i = 0; i < 32; i++) {
-      graphics_set_palette((uint8_t)i, frame_start_rgb[i]);
+      if (asic_pen_ever_written[i]) {
+         graphics_set_palette((uint8_t)i, asic_rgb[i]);
+      }
    }
-   for (int i = 32; i < dyn_next && i < 251; i++) {
-      graphics_set_palette((uint8_t)i, dynamic_rgb[i]);
+   /* Switch to the OTHER dynamic slot range for the next frame.
+    * Double buffering: even frames use 32-143, odd frames use 144-254.
+    * The DVI may still be displaying pixels from THIS frame that reference
+    * the current range — the OTHER range is safe to overwrite. */
+   asic_frame_parity ^= 1;
+   if (asic_frame_parity) {
+      dyn_next = 144;
+      dyn_max = 255;
+   } else {
+      dyn_next = 32;
+      dyn_max = 144;
    }
-   /* Reset dynamic allocator for next frame */
-   dyn_next = 32;
    /* Restore base palette mapping for start of next frame */
    for (int i = 0; i < 32; i++) {
       GateArray.palette[i] = i;
       palette_byte[i] = (byte)i;
+      pen_last_slot[i] = (uint8_t)i; /* no dynamic slot yet */
    }
    crtc_update_palette_cache();
 }
@@ -142,6 +207,8 @@ void asic_flush_palette(void) {
 void asic_reset() {
    asic.locked = true;
    asic.lockSeqPos = 0;
+   asic_palette_ever_written = false;
+   memset(asic_pen_ever_written, 0, sizeof(asic_pen_ever_written));
 
    asic.extend_border = false;
    asic.hscroll = 0;

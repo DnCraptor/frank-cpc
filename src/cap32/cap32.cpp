@@ -347,10 +347,11 @@ __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair p
          case 1:
             GateArray.ink_values[GateArray.pen] = val & 0x1f;
             if (CPC.model > 2) {
-               /* CPC Plus: identity mapping — ASIC palette is programmed
-                * directly via register page writes. Don't rebuild LUT cache
-                * here; the ASIC palette handler manages palette_byte[]. */
+               /* CPC Plus: GA palette writes also update the ASIC palette.
+                * This is how raster effects work on CPC Plus games that use
+                * standard GA palette port writes (OUT &7Fxx). */
                GateArray.palette[GateArray.pen] = GateArray.pen;
+               asic_ga_palette_write(GateArray.pen, val & 0x1f);
             } else {
                GateArray.palette[GateArray.pen] = GateArray.ink_values[GateArray.pen];
                GateArray.palette[33] = GateArray.palette[1];

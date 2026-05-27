@@ -64,5 +64,6 @@ bool asic_register_page_write(word addr, byte val);
 void asic_draw_sprites();
 void asic_flush_palette();
 void asic_snapshot_palette();
+void asic_ga_palette_write(int pen, byte ink_value);
 
 #endif

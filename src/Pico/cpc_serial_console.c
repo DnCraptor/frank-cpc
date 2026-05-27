@@ -326,6 +326,29 @@ static void dispatch_command(const char *line) {
         asic_enable_palette_trace();
         printf("OK palette trace enabled for 3 frames\n");
     }
+    else if ((p = match_prefix(line, "PALSNAP"))) {
+        p = skip_ws(p);
+        int y = 30; /* default scanline */
+        if (*p) y = atoi(p);
+        extern volatile int dbg_capture_scrln;
+        extern volatile bool dbg_snap_ready;
+        extern uint8_t dbg_palette_byte_snap[34];
+        extern uint8_t dbg_scanline_snap[64];
+        if (dbg_snap_ready) {
+            /* Results from previous capture are ready */
+            printf("OK PB:");
+            for (int i = 0; i < 17; i++) printf(" %d", dbg_palette_byte_snap[i]);
+            printf("\nSCN:");
+            for (int i = 0; i < 64; i++) printf(" %02X", dbg_scanline_snap[i]);
+            printf("\n");
+            dbg_snap_ready = false;
+        } else {
+            /* Arm capture for next frame */
+            dbg_snap_ready = false;
+            dbg_capture_scrln = y;
+            printf("OK armed for fb_y=%d (read with PALSNAP again)\n", y);
+        }
+    }
     else if ((p = match_prefix(line, "Z80")))     {
         char buf[320];
         cpc_debug_z80_dump(buf, sizeof(buf));
