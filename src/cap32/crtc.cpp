@@ -54,6 +54,7 @@ int crtc_fb_y_start = 21; // tuned to center typical CPC display in 240 lines
 #define CPC_FB_HEIGHT 240
 #endif
 static int scrln_visible = 0; /* cached: is current scanline in visible range? */
+int crtc_scanline_had_active = 0; /* set when active display rendered on current scanline */
 
 #define MIN_VHOLD 250
 #define MAX_VHOLD 380
@@ -928,6 +929,7 @@ void __attribute__((hot, section(".time_critical.crtc"))) crtc_cycle(int repeat_
             }
             /* Fast path: if in normal display mode, use combined prerender+render */
             if (__builtin_expect(LastPreRend == 0x03ff0000, 1)) {
+               crtc_scanline_had_active = 1;
                prerender_and_render_normal_8bpp();
             } else {
                /* Border/sync path: write border color directly, skip RendBuff round-trip */
@@ -1033,6 +1035,7 @@ void __attribute__((hot, section(".time_critical.crtc"))) crtc_cycle(int repeat_
                extern void scanline_complete(int scrln);
                scanline_complete(VDU.scrln);
             }
+            crtc_scanline_had_active = 0; /* reset for next scanline */
             CPC.scr_base += CPC.scr_line_offs; // advance surface pointer to next row
          }
          HadP = 1;
