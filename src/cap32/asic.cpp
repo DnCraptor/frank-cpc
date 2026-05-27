@@ -43,38 +43,87 @@ extern "C" {
 }
 
 uint32_t asic_rgb[32]; /* current RGB888 for each ASIC palette entry */
-static uint32_t asic_rgb_snapshot[32]; /* palette snapshot taken at frame start */
-static bool asic_snapshot_taken = false;
 
-static void asic_update_colour(int colour) {
-   word raw = (pbRegisterPage[0x2400 + colour * 2]) |
-              (pbRegisterPage[0x2400 + colour * 2 + 1] << 8);
-   unsigned int r = (raw >> 4) & 0x0F;
-   unsigned int g = (raw >> 8) & 0x0F;
-   unsigned int b = raw & 0x0F;
-   uint32_t rgb = (r * 17) << 16 | (g * 17) << 8 | (b * 17);
-   asic_rgb[colour] = rgb;
-   GateArray.palette[colour] = colour;
+/* Dynamic palette allocation for per-scanline raster effects.
+ * CPC Plus games reprogram palette entries mid-frame to create color
+ * gradients. Since our 8bpp framebuffer uses indexed color, we allocate
+ * a new hardware palette slot for each unique (pen, RGB) combination
+ * written during the frame. Entries 0-31 = base ASIC palette,
+ * 32-255 = dynamically allocated for mid-frame changes. */
+static uint32_t dynamic_rgb[256];  /* RGB for each allocated slot */
+static int dyn_next = 32;          /* next free dynamic slot */
+
+extern byte palette_byte[34];
+extern uint32_t *active_halfwidth_lut;
+void crtc_update_palette_cache();
+
+static int pal_trace_frame = 0;
+static bool pal_trace_enabled = false;
+
+extern "C" void asic_enable_palette_trace(void) {
+   pal_trace_frame = 3;
+   pal_trace_enabled = true;
 }
 
-/* Called by CRTC at the start of the visible area (after vblank).
- * Snapshots the current palette so that raster effects during the frame
- * don't cause flicker on our indexed-colour display. */
-void asic_snapshot_palette(void) {
-   if (CPC.model <= 2) return;
-   if (asic_snapshot_taken) return;
-   asic_snapshot_taken = true;
-   for (int i = 0; i < 32; i++) {
-      asic_rgb_snapshot[i] = asic_rgb[i];
+static void asic_update_colour(int colour) {
+   byte even = pbRegisterPage[0x2400 + colour * 2];
+   byte odd  = pbRegisterPage[0x2400 + colour * 2 + 1];
+   /* CPC Plus ASIC palette format (same as caprice32):
+    * Even byte: bits 7-4 = Red, bits 3-0 = Blue
+    * Odd byte:  bits 3-0 = Green */
+   unsigned int r = (even >> 4) & 0x0F;
+   unsigned int b = even & 0x0F;
+   unsigned int g = odd & 0x0F;
+   uint32_t rgb = (r * 17) << 16 | (g * 17) << 8 | (b * 17);
+   asic_rgb[colour] = rgb;
+
+   if (pal_trace_enabled) {
+      printf("PAL pen=%d even=0x%02X odd=0x%02X R=%d G=%d B=%d rgb=0x%06X slot=%d\n",
+             colour, even, odd, r, g, b, rgb, dyn_next);
    }
+
+   if (dyn_next < 251) {
+      int idx = dyn_next++;
+      dynamic_rgb[idx] = rgb;
+      GateArray.palette[colour] = idx;
+      palette_byte[colour] = (byte)idx;
+      active_halfwidth_lut = nullptr;
+   } else {
+      /* Out of dynamic slots — reuse the base entry (will alias) */
+      dynamic_rgb[colour] = rgb;
+      GateArray.palette[colour] = colour;
+      palette_byte[colour] = (byte)colour;
+   }
+}
+
+void asic_snapshot_palette(void) {
+   /* No-op — replaced by dynamic allocation */
 }
 
 void asic_flush_palette(void) {
-   /* Apply the snapshot taken at frame start */
-   for (int i = 0; i < 32; i++) {
-      graphics_set_palette((uint8_t)i, asic_rgb_snapshot[i]);
+   if (pal_trace_enabled) {
+      printf("PAL FLUSH dyn_next=%d\n", dyn_next);
+      /* Dump slots 79-95 (the orange gradient section) */
+      for (int i = 79; i < dyn_next && i < 95; i++) {
+         printf("  SLOT[%d]=0x%06X\n", i, dynamic_rgb[i]);
+      }
+      if (--pal_trace_frame <= 0) pal_trace_enabled = false;
    }
-   asic_snapshot_taken = false;
+   /* Program all base + dynamic palette entries to hardware */
+   for (int i = 0; i < 32; i++) {
+      graphics_set_palette((uint8_t)i, asic_rgb[i]);
+   }
+   for (int i = 32; i < dyn_next && i < 251; i++) {
+      graphics_set_palette((uint8_t)i, dynamic_rgb[i]);
+   }
+   /* Reset dynamic allocator for next frame */
+   dyn_next = 32;
+   /* Restore base palette mapping for start of next frame */
+   for (int i = 0; i < 32; i++) {
+      GateArray.palette[i] = i;
+      palette_byte[i] = (byte)i;
+   }
+   crtc_update_palette_cache();
 }
 
 /* ------------------------------------------------------------------ */
@@ -320,10 +369,22 @@ bool asic_register_page_write(word addr, byte val) {
       int colour = (addr & 0x3F) >> 1;
       if ((addr % 2) == 1) {
          pbRegisterPage[(addr & 0x3FFF)] = (val & 0x0F);
+         /* Allocate dynamic slot on the SECOND byte write only —
+          * avoids wasting slots on intermediate states when both
+          * bytes are written sequentially. */
+         asic_update_colour(colour);
       } else {
          pbRegisterPage[(addr & 0x3FFF)] = val;
+         /* For even byte, just update the cached RGB value without
+          * allocating a new dynamic slot. If the game only writes
+          * the even byte, the color changes on next frame's base. */
+         byte even = pbRegisterPage[0x2400 + colour * 2];
+         byte odd  = pbRegisterPage[0x2400 + colour * 2 + 1];
+         unsigned int r = (even >> 4) & 0x0F;
+         unsigned int b = even & 0x0F;
+         unsigned int g = odd & 0x0F;
+         asic_rgb[colour] = (r * 17) << 16 | (g * 17) << 8 | (b * 17);
       }
-      asic_update_colour(colour);
       return false;
    }
 

@@ -455,11 +455,17 @@ inline void change_mode()
       CRTC.flag_hadhsync = 0;
       GateArray.scr_mode = GateArray.requested_scr_mode; // execute mode change
       ModeMap = ModeMaps[GateArray.scr_mode]; // update ModeMap pointer
-      /* Update active LUT pointer for the new mode */
-      switch (GateArray.scr_mode) {
-         case 0: active_halfwidth_lut = mode0_halfwidth_lut; break;
-         case 1: active_halfwidth_lut = mode1_halfwidth_lut; break;
-         default: active_halfwidth_lut = nullptr; break;
+      /* In CPC Plus mode with dynamic palette allocation, the LUT contains
+       * stale base-slot values. Keep it disabled so the renderer uses
+       * per-pixel palette_byte[] lookup with the correct dynamic slots. */
+      if (CPC.model > 2) {
+         active_halfwidth_lut = nullptr;
+      } else {
+         switch (GateArray.scr_mode) {
+            case 0: active_halfwidth_lut = mode0_halfwidth_lut; break;
+            case 1: active_halfwidth_lut = mode1_halfwidth_lut; break;
+            default: active_halfwidth_lut = nullptr; break;
+         }
       }
    }
 }

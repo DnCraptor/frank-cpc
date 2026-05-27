@@ -310,6 +310,11 @@ static void dispatch_command(const char *line) {
         cpc_debug_asic_dump(buf, sizeof(buf));
         printf("OK %s\n", buf);
     }
+    else if ((p = match_prefix(line, "PALTRACE"))) {
+        extern void asic_enable_palette_trace(void);
+        asic_enable_palette_trace();
+        printf("OK palette trace enabled for 3 frames\n");
+    }
     else if ((p = match_prefix(line, "Z80")))     {
         char buf[320];
         cpc_debug_z80_dump(buf, sizeof(buf));

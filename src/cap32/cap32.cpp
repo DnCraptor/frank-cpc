@@ -348,13 +348,14 @@ __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair p
             GateArray.ink_values[GateArray.pen] = val & 0x1f;
             if (CPC.model > 2) {
                /* CPC Plus: identity mapping — ASIC palette is programmed
-                * directly via register page writes. */
+                * directly via register page writes. Don't rebuild LUT cache
+                * here; the ASIC palette handler manages palette_byte[]. */
                GateArray.palette[GateArray.pen] = GateArray.pen;
             } else {
                GateArray.palette[GateArray.pen] = GateArray.ink_values[GateArray.pen];
+               GateArray.palette[33] = GateArray.palette[1];
+               crtc_update_palette_cache();
             }
-            GateArray.palette[33] = GateArray.palette[1];
-            crtc_update_palette_cache();
             break;
 
          case 2:
