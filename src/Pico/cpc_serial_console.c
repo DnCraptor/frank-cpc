@@ -42,6 +42,7 @@
 #include "hardware/structs/watchdog.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <ctype.h>
 
 #define CMD_BUF_SIZE 256
@@ -309,6 +310,16 @@ static void dispatch_command(const char *line) {
         char buf[1024];
         cpc_debug_asic_dump(buf, sizeof(buf));
         printf("OK %s\n", buf);
+    }
+    else if ((p = match_prefix(line, "SPRDUMP"))) {
+        p = skip_ws(p);
+        int id = 0;
+        if (*p) id = atoi(p);
+        if (id < 0 || id > 15) { printf("ERR sprite 0-15\n"); }
+        else {
+            extern void cpc_debug_sprite_dump(int id);
+            cpc_debug_sprite_dump(id);
+        }
     }
     else if ((p = match_prefix(line, "PALTRACE"))) {
         extern void asic_enable_palette_trace(void);

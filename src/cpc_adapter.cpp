@@ -839,14 +839,29 @@ uint8_t cpc_debug_read_mem(uint16_t addr) {
     return z80_read_mem(addr);
 }
 
+void cpc_debug_sprite_dump(int id) {
+    printf("SPR%d pos=(%d,%d) mag=%dx%d\n", id,
+        asic.sprites_x[id], asic.sprites_y[id],
+        asic.sprites_mag_x[id], asic.sprites_mag_y[id]);
+    for (int y = 0; y < 16; y++) {
+        printf("  Y%02d:", y);
+        for (int x = 0; x < 16; x++) {
+            printf(" %02X", asic.sprites[id][x][y]);
+        }
+        printf("\n");
+    }
+}
+
 int cpc_debug_asic_dump(char *buf, int buflen) {
     extern uint32_t asic_rgb[32];
+    extern int crtc_sl0_scrln;
     int n = snprintf(buf, buflen,
         "model=%d locked=%d hscroll=%u vscroll=%u split_sl=%d split_addr=%04X "
-        "regPageOn=%d int_sl=%d",
+        "regPageOn=%d int_sl=%d sl0=%d fby0=%d",
         CPC.model, asic.locked, asic.hscroll, asic.vscroll,
         CRTC.split_sl, CRTC.split_addr,
-        GateArray.registerPageOn, CRTC.interrupt_sl);
+        GateArray.registerPageOn, CRTC.interrupt_sl,
+        crtc_sl0_scrln, fb_y_start);
     /* Dump all 32 palette RGB values */
     n += snprintf(buf + n, buflen - n, "\nPAL:");
     for (int i = 0; i < 32 && n < buflen - 10; i++) {

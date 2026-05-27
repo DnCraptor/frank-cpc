@@ -80,6 +80,9 @@ int cpc_debug_crtc_dump(char *buf, int buflen);
 /* Debug: dump ASIC state. */
 int cpc_debug_asic_dump(char *buf, int buflen);
 
+/* Debug: dump sprite pixel data */
+void cpc_debug_sprite_dump(int id);
+
 /* Debug: dump Z80 register state. */
 int cpc_debug_z80_dump(char *buf, int buflen);
 

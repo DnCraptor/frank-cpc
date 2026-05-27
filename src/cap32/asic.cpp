@@ -27,6 +27,7 @@ void SetAYRegister(int Num, byte Value);
 extern byte *scanline_render_target;
 extern int scanline_render_stride;
 extern int fb_y_start;
+extern int crtc_sl0_scrln;
 
 asic_t asic;
 
@@ -461,12 +462,14 @@ void asic_draw_sprites() {
    if (asic.locked) return;
    if (!scanline_render_target) return;
 
-   /* CPC Plus sprite coordinate system (matching caprice32):
-    * Sprite X/Y coords are in CPC pixel units.  Our 320×240 framebuffer is
-    * half CPC horizontal resolution, so X must be divided by 2 AFTER adding
-    * the per-pixel offset (magnification + dx).  Y maps 1:1 to scanlines. */
+   /* CPC Plus sprite coordinate system:
+    * Sprite Y is relative to CRTC sl_count=0 (frame restart).
+    * crtc_sl0_scrln records VDU.scrln at that moment.
+    * fb row = (sprite_y + crtc_sl0_scrln) - fb_y_start
+    * Sprite X is in CPC pixel units; our fb is half CPC horizontal resolution. */
    const int fb_w = 320;
    const int fb_h = 240;
+   const int y_offset = crtc_sl0_scrln - fb_y_start;
 
    for (int i = 15; i >= 0; i--) {
       int sx = asic.sprites_x[i];
@@ -488,7 +491,7 @@ void asic_draw_sprites() {
             if (p == 0) continue; /* transparent */
 
             for (int dy = 0; dy < my; dy++) {
-               int py = sy + y * my + dy;
+               int py = sy + y * my + dy + y_offset;
                if (py < 0) continue;
                if (py >= fb_h) break;
 

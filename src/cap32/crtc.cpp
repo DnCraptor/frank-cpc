@@ -600,6 +600,8 @@ inline void reload_addr()
 }
 
 
+int crtc_sl0_scrln = 0; /* VDU.scrln when sl_count resets to 0 */
+
 inline void restart_frame()
 {
    CRTC.flag_invta = 0;
@@ -610,6 +612,7 @@ inline void restart_frame()
    CRTC.scr_base = 0;
    CRTC.line_count = 0; // reset character line counter
    CRTC.sl_count = 0; // reset scan line counter
+   crtc_sl0_scrln = VDU.scrln; /* record scrln at sl_count=0 for sprite mapping */
    reload_addr();
 }
 
