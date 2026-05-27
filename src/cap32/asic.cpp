@@ -467,12 +467,19 @@ void asic_draw_sprites() {
     * crtc_sl0_scrln records VDU.scrln at that moment.
     * fb row = (sprite_y + crtc_sl0_scrln) - fb_y_start
     *
-    * Sprite X=0 is the left edge of the active display.
-    * scanline_complete() now copies from scanline_buf + crtc_active_display_offset,
-    * so fb column 0 = active display start. No X adjustment needed. */
+    * Sprite X is in mode-2 pixels relative to the CRTC character 0 position.
+    * scanline_complete() copies from scanline_buf + crtc_active_display_offset,
+    * so fb column 0 = byte crtc_active_display_offset in the scanline buffer.
+    * We must add the extra offset (compared to standard R2=46) to sprite X
+    * to keep sprites aligned with the bitmap content. */
    const int fb_w = 320;
    const int fb_h = 240;
    const int y_offset = crtc_sl0_scrln - fb_y_start;
+   extern int crtc_active_display_offset;
+   /* Sprite X adjustment: each extra byte of display offset shifts the bitmap
+    * right in the framebuffer; sprites need the same shift.
+    * Standard offset is 32 bytes; each byte = 1 FB pixel = 2 mode-2 pixels. */
+   const int sprite_x_adjust = (crtc_active_display_offset - 32) * 2;
 
    for (int i = 15; i >= 0; i--) {
       int sx = asic.sprites_x[i];
@@ -485,7 +492,7 @@ void asic_draw_sprites() {
 
       for (int x = 0; x < 16; x++) {
          /* Early column clip in CPC coords */
-         int cpc_x_base = sx + x * mx;
+         int cpc_x_base = sx + x * mx + sprite_x_adjust;
          if (cpc_x_base + mx <= 0) continue;
          if (cpc_x_base / 2 >= fb_w) break;
 
