@@ -1,0 +1,432 @@
+/* Caprice32 - Amstrad CPC Emulator
+   (c) Copyright 1997-2005 Ulrich Doewich
+
+   CPC Plus ASIC emulation — ported for frank-cpc RP2350 build.
+   Based on caprice32 asic.cpp with CPCEC as secondary reference.
+   SDL dependencies removed; adapted for 8bpp paletted framebuffer.
+*/
+
+#include "asic.h"
+#include "crtc.h"
+#include <cstring>
+#include <cstdio>
+
+byte *pbRegisterPage;
+
+extern t_GateArray GateArray;
+extern t_CRTC CRTC;
+extern t_CPC CPC;
+extern t_PSG PSG;
+extern byte *membank_write[4];
+extern t_MemBankConfig membank_config;
+void SetAYRegister(int Num, byte Value);
+
+/* Frank-cpc uses a per-scanline 8bpp buffer; sprites are drawn into
+ * the final framebuffer after the frame completes.  We need access
+ * to the framebuffer pointer and stride for sprite overlay. */
+extern byte *scanline_render_target;
+extern int scanline_render_stride;
+extern int fb_y_start;
+
+asic_t asic;
+
+/* ------------------------------------------------------------------ */
+/* ASIC enhanced palette: 12-bit RGB → hardware palette index.        */
+/* Frank-cpc uses a 32-entry hardware palette (0-31 = CPC colours).   */
+/* ASIC colours 0-31 use palette entries 0-31.                        */
+/* We extend the hardware palette for ASIC 4096-color support by      */
+/* directly programming RGB values into the platform palette.         */
+/* ------------------------------------------------------------------ */
+extern "C" {
+    void graphics_set_palette(uint8_t index, uint32_t rgb888);
+    unsigned char *cpc_cartridge_get_page(int page);
+}
+
+static uint32_t asic_rgb[32]; /* cached RGB888 for each ASIC palette entry */
+
+static void asic_update_colour(int colour) {
+   word raw = (pbRegisterPage[0x2400 + colour * 2]) |
+              (pbRegisterPage[0x2400 + colour * 2 + 1] << 8);
+   /* Format: 0000GGGG 0RRRRBBB (each nibble 0-15, scale to 0-255) */
+   unsigned int r = (raw >> 4) & 0x0F;
+   unsigned int g = raw >> 8;  /* high byte low nibble */
+   unsigned int b = raw & 0x0F;
+   /* Scale 4-bit to 8-bit: multiply by 17 (0→0, 15→255) */
+   uint32_t rgb = (r * 17) << 16 | (g * 17) << 8 | (b * 17);
+   asic_rgb[colour] = rgb;
+   /* Program into hardware palette */
+   graphics_set_palette((uint8_t)colour, rgb);
+   /* Update GateArray palette entry for renderer compatibility */
+   GateArray.palette[colour] = colour;
+}
+
+/* ------------------------------------------------------------------ */
+/* Reset                                                              */
+/* ------------------------------------------------------------------ */
+void asic_reset() {
+   asic.locked = true;
+   asic.lockSeqPos = 0;
+
+   asic.extend_border = false;
+   asic.hscroll = 0;
+   asic.vscroll = 0;
+
+   for (int i = 0; i < 16; i++) {
+      asic.sprites_x[i] = 0;
+      asic.sprites_y[i] = 0;
+      asic.sprites_mag_x[i] = 0;
+      asic.sprites_mag_y[i] = 0;
+      for (int j = 0; j < 16; j++) {
+         for (int k = 0; k < 16; k++) {
+            asic.sprites[i][j][k] = 0;
+         }
+      }
+   }
+
+   asic.raster_interrupt = false;
+   asic.interrupt_vector = 1;
+
+   for (auto &channel : asic.dma.ch) {
+      channel.source_address = 0;
+      channel.loop_address = 0;
+      channel.prescaler = 0;
+      channel.enabled = false;
+      channel.interrupt = false;
+      channel.pause_ticks = 0;
+      channel.tick_cycles = 0;
+      channel.loops = 0;
+   }
+
+   if (pbRegisterPage) {
+      std::memset(pbRegisterPage, 0, 16384);
+   }
+}
+
+/* ------------------------------------------------------------------ */
+/* ASIC unlock sequence detection                                     */
+/* Written to via CRTC register select port (active-low bit 14).      */
+/* Sequence: 00 FF 77 B3 51 A8 D4 62 39 9C 46 2B 15 8A CD           */
+/* Last byte 0xCD = unlock, anything else = lock.                     */
+/* ------------------------------------------------------------------ */
+void asic_poke_lock_sequence(byte val) {
+   static constexpr byte lockSeq[] = {
+      0x00, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4,
+      0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd
+   };
+   static constexpr int lockSeqLength = sizeof(lockSeq) / sizeof(lockSeq[0]);
+
+   if (asic.lockSeqPos == 0) {
+      if (val > 0) {
+         asic.lockSeqPos = 1;
+      }
+   } else {
+      if (asic.lockSeqPos < lockSeqLength) {
+         if (val == lockSeq[asic.lockSeqPos]) {
+            asic.lockSeqPos++;
+         } else {
+            asic.lockSeqPos++;
+            if (asic.lockSeqPos == lockSeqLength) {
+               asic.locked = true;
+            }
+            if (val == 0) {
+               asic.lockSeqPos = 2;
+            } else {
+               asic.lockSeqPos = 1;
+            }
+         }
+      } else {
+         if (asic.lockSeqPos == lockSeqLength) {
+            asic.locked = false;
+            asic.lockSeqPos = (val == 0) ? 0 : 1;
+         }
+      }
+   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Sprite magnification decode                                        */
+/* ------------------------------------------------------------------ */
+static inline unsigned short decode_magnification(byte val) {
+   byte mag = (val & 0x3);
+   if (mag == 3) mag = 4;
+   return mag;
+}
+
+/* ------------------------------------------------------------------ */
+/* DMA audio cycle — called once per HSYNC (at hsw_count == 3)        */
+/* Reads 16-bit instructions from RAM and programs PSG registers.     */
+/* ------------------------------------------------------------------ */
+void asic_dma_cycle() {
+   if (CPC.model <= 2) return;
+
+   byte dcsr = 0;
+   bool dcsr_changed = false;
+
+   for (int c = 0; c < NB_DMA_CHANNELS; c++) {
+      dma_channel &channel = asic.dma.ch[c];
+      if (!channel.enabled) continue;
+
+      if (channel.pause_ticks > 0) {
+         if (channel.tick_cycles < channel.prescaler) {
+            channel.tick_cycles++;
+            continue;
+         }
+         channel.tick_cycles = 0;
+         channel.pause_ticks--;
+         continue;
+      }
+
+      int bank = ((channel.source_address & 0xC000) >> 14);
+      int addr = (channel.source_address & 0x3FFF);
+      word instruction = 0;
+      instruction |= membank_config[GateArray.RAM_config & 7][bank][addr];
+      instruction |= membank_config[GateArray.RAM_config & 7][bank][addr + 1] << 8;
+
+      int opcode = ((instruction & 0x7000) >> 12);
+      if (opcode == 0) {
+         /* LOAD R,DD — write DD to PSG register R */
+         int R = ((instruction & 0x0F00) >> 8);
+         byte val = (instruction & 0x00FF);
+         SetAYRegister(R, val);
+      } else {
+         if (opcode & 0x01) {
+            /* PAUSE N */
+            channel.pause_ticks = instruction & 0x0FFF;
+            channel.tick_cycles = 0;
+         }
+         if (opcode & 0x02) {
+            /* REPEAT NNN */
+            channel.loops = instruction & 0x0FFF;
+            channel.loop_address = channel.source_address;
+         }
+         if (opcode & 0x04) {
+            /* NOP / LOOP / INT / STOP */
+            if (instruction & 0x0001) {
+               /* LOOP */
+               if (channel.loops > 0) {
+                  channel.source_address = channel.loop_address;
+               }
+            }
+            if (instruction & 0x0010) {
+               /* INT */
+               channel.interrupt = true;
+            }
+            if (instruction & 0x0020) {
+               /* STOP */
+               channel.enabled = false;
+            }
+         }
+      }
+      channel.source_address += 2;
+
+      /* Update DMA registers in register page */
+      {
+         word raddr = 0x6C00 + (c << 2);
+         if (pbRegisterPage) {
+            pbRegisterPage[(raddr - 0x4000)] = (byte)(channel.source_address & 0xFF);
+            pbRegisterPage[(raddr - 0x4000) + 1] = (byte)((channel.source_address >> 8) & 0xFF);
+         }
+         if (channel.enabled) {
+            dcsr |= (0x1 << c);
+            dcsr_changed = true;
+         }
+         if (channel.interrupt) {
+            dcsr |= (0x40 >> c);
+            dcsr_changed = true;
+         }
+      }
+   }
+
+   if (dcsr_changed && pbRegisterPage) {
+      pbRegisterPage[0x6C0F - 0x4000] = dcsr;
+   }
+}
+
+/* ------------------------------------------------------------------ */
+/* ASIC register page write handler                                   */
+/* Called when Z80 writes to 0x4000-0x7FFF while register page is     */
+/* mapped. Returns true if byte should also be written to backing RAM.*/
+/* ------------------------------------------------------------------ */
+bool asic_register_page_write(word addr, byte val) {
+   if (addr < 0x4000 || addr > 0x7FFF) {
+      return true;
+   }
+
+   /* Sprite pixel data: 0x4000-0x4FFF */
+   if (addr >= 0x4000 && addr < 0x5000) {
+      int id = ((addr & 0xF00) >> 8);
+      int y = ((addr & 0xF0) >> 4);
+      int x = (addr & 0xF);
+      byte color = (val & 0xF);
+      pbRegisterPage[(addr & 0x3FFF)] = color;
+      if (color > 0) {
+         color += 16; /* sprite colours use palette entries 16-31 */
+      }
+      asic.sprites[id][x][y] = color;
+      return false;
+   }
+
+   /* Sprite coordinates: 0x6000-0x607F */
+   if (addr >= 0x6000 && addr < 0x607D) {
+      int id = ((addr - 0x6000) >> 3);
+      int type = (addr & 0x7);
+      switch (type) {
+         case 0:
+            asic.sprites_x[id] = (asic.sprites_x[id] & 0xFF00) | val;
+            pbRegisterPage[(addr & 0x3FFF) + 4] = val;
+            break;
+         case 1:
+            val = val & 0x3;
+            asic.sprites_x[id] = (asic.sprites_x[id] & 0x00FF) | (val << 8);
+            pbRegisterPage[(addr & 0x3FFF) + 4] = val;
+            break;
+         case 2:
+            asic.sprites_y[id] = ((asic.sprites_y[id] & 0xFF00) | val);
+            pbRegisterPage[(addr & 0x3FFF) + 4] = val;
+            break;
+         case 3:
+            val = val & 0x1;
+            asic.sprites_y[id] = ((asic.sprites_y[id] & 0x00FF) | (val << 8));
+            pbRegisterPage[(addr & 0x3FFF) + 4] = val;
+            break;
+         case 4:
+            asic.sprites_mag_x[id] = decode_magnification(val >> 2);
+            asic.sprites_mag_y[id] = decode_magnification(val);
+            return false; /* write-only */
+         default:
+            break;
+      }
+   }
+
+   /* Enhanced palette: 0x6400-0x643F */
+   if (addr >= 0x6400 && addr < 0x6440) {
+      int colour = (addr & 0x3F) >> 1;
+      if ((addr % 2) == 1) {
+         pbRegisterPage[(addr & 0x3FFF)] = (val & 0x0F);
+      } else {
+         pbRegisterPage[(addr & 0x3FFF)] = val;
+      }
+      asic_update_colour(colour);
+      return false;
+   }
+
+   /* Scanline events: 0x6800-0x6805 */
+   if (addr >= 0x6800 && addr < 0x6806) {
+      if (addr == 0x6800) {
+         /* Programmable Raster Interrupt scan line */
+         CRTC.interrupt_sl = val;
+      } else if (addr == 0x6801) {
+         /* Screen Split Scan Line */
+         CRTC.split_sl = val;
+      } else if (addr == 0x6802) {
+         CRTC.split_addr &= 0x00FF;
+         CRTC.split_addr |= (val << 8);
+      } else if (addr == 0x6803) {
+         CRTC.split_addr &= 0x3F00;
+         CRTC.split_addr |= val;
+      } else if (addr == 0x6804) {
+         /* Soft Scroll Control Register */
+         asic.hscroll = (val & 0xf);
+         asic.vscroll = ((val >> 4) & 0x7);
+         asic.extend_border = (val >> 7);
+         update_skew();
+      } else if (addr == 0x6805) {
+         /* Interrupt Vector Register */
+         asic.interrupt_vector = val & 0xF8;
+      }
+   }
+
+   /* Analog inputs: 0x6808-0x680F (ignore) */
+   if (addr >= 0x6808 && addr < 0x6810) {
+      return true;
+   }
+
+   /* DMA channel source addresses: 0x6C00-0x6C0B */
+   if (addr >= 0x6C00 && addr < 0x6C0B) {
+      int c = ((addr & 0xc) >> 2);
+      dma_channel *channel = &asic.dma.ch[c];
+      switch (addr & 0x3) {
+         case 0:
+            channel->source_address &= 0xFF00;
+            channel->source_address |= (val & 0xFE); /* word-aligned */
+            break;
+         case 1:
+            channel->source_address &= 0x00FF;
+            channel->source_address |= (val << 8);
+            break;
+         case 2:
+            channel->prescaler = val;
+            break;
+         default:
+            break;
+      }
+   }
+
+   /* DMA control/status register: 0x6C0F */
+   if (addr == 0x6C0F) {
+      for (int c = 0; c < NB_DMA_CHANNELS; c++) {
+         asic.dma.ch[c].enabled = (val & (0x1 << c));
+      }
+   }
+
+   return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sprite rendering                                                   */
+/* Draws sprites over the completed framebuffer.                      */
+/* Frank-cpc framebuffer is 320x240 8bpp with palette indices.        */
+/* Sprite coordinates are in CPC pixel space (relative to border).    */
+/* ------------------------------------------------------------------ */
+void asic_draw_sprites() {
+   if (CPC.model <= 2) return;
+   if (asic.locked) return;
+   if (!scanline_render_target) return;
+
+   /* CPC Plus sprite coordinate system:
+    * X=0,Y=0 is top-left of border area.
+    * The visible bitmap area starts at borderWidth, borderHeight.
+    * In frank-cpc, the framebuffer is 320x240 starting from the
+    * visible area (no border rendered). So sprite coordinates
+    * need to be offset relative to the visible area start. */
+   const int borderWidth = 64 + (asic.extend_border ? 16 : 0);
+   const int borderHeight = 40 + 8 * (30 - CRTC.registers[7]);
+   const int fb_w = 320;
+   const int fb_h = 240;
+
+   for (int i = 15; i >= 0; i--) {
+      int sx = asic.sprites_x[i];
+      int mx = asic.sprites_mag_x[i];
+      if (mx == 0) continue;
+
+      int sy = asic.sprites_y[i];
+      int my = asic.sprites_mag_y[i];
+      if (my == 0) continue;
+
+      /* Convert from CPC Plus coordinate space to framebuffer space.
+       * CPC Plus uses MODE 1 pixel coordinates (320px wide visible).
+       * Sprite X is in half-MODE-0 pixels (2x MODE 1 pixels per unit).
+       * We halve the X coordinate to map to our 320px framebuffer. */
+      int fbx = (sx - borderWidth) / 2;
+      int fby = sy - borderHeight;
+
+      for (int x = 0; x < 16; x++) {
+         for (int y = 0; y < 16; y++) {
+            byte p = asic.sprites[i][x][y];
+            if (p == 0) continue; /* transparent */
+
+            for (int dy = 0; dy < my; dy++) {
+               int py = fby + (y * my) + dy;
+               if (py < 0 || py >= fb_h) continue;
+
+               for (int dx = 0; dx < mx; dx++) {
+                  int px = fbx + (x * mx) + dx;
+                  if (px < 0 || px >= fb_w) continue;
+
+                  scanline_render_target[py * scanline_render_stride + px] = p;
+               }
+            }
+         }
+      }
+   }
+}

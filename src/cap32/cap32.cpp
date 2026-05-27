@@ -23,6 +23,7 @@
 #include "cap32.h"
 #include "crtc.h"
 #include "z80.h"
+#include "asic.h"
 
 extern t_z80regs z80;
 extern t_CPC CPC;
@@ -65,11 +66,13 @@ byte fdc_read_data();
 void fdc_write_data(byte val);
 void crtc_update_palette_cache();
 
+extern "C" unsigned char *cpc_cartridge_get_page(int page);
+
+t_MemBankConfig membank_config{};
+
 #define MAX_FREQ_ENTRIES 6
 
 namespace {
-
-t_MemBankConfig membank_config{};
 
 constexpr byte bit_values[8] = {
    0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80
@@ -219,7 +222,13 @@ void ga_memory_manager()
    }
 
    if ((GateArray.ROM_config & 0x04) == 0 && pbROMlo != nullptr) {
-      membank_read[0] = pbROMlo;
+      membank_read[GateArray.lower_ROM_bank] = pbROMlo;
+   }
+
+   /* CPC Plus: map ASIC register page at 0x4000-0x7FFF */
+   if (CPC.model > 2 && GateArray.registerPageOn && pbRegisterPage) {
+      membank_read[1] = pbRegisterPage;
+      membank_write[1] = pbRegisterPage;
    }
 
    if ((GateArray.ROM_config & 0x08) == 0) {
@@ -343,12 +352,30 @@ __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair p
             break;
 
          case 2:
-            GateArray.ROM_config = val;
-            GateArray.requested_scr_mode = val & 0x03;
-            ga_memory_manager();
-            if (val & 0x10) {
-               z80.int_pending = 0;
-               GateArray.sl_count = 0;
+            if (CPC.model > 2 && !asic.locked && (val & 0x20)) {
+               /* CPC Plus RMR2 register */
+               int membank = (val >> 3) & 3;
+               if (membank == 3) {
+                  GateArray.registerPageOn = true;
+                  membank = 0;
+               } else {
+                  GateArray.registerPageOn = false;
+               }
+               int page = (val & 0x7);
+               GateArray.lower_ROM_bank = membank;
+               byte *cpr_page = cpc_cartridge_get_page(page);
+               if (cpr_page) {
+                  pbROMlo = cpr_page;
+               }
+               ga_memory_manager();
+            } else {
+               GateArray.ROM_config = val;
+               GateArray.requested_scr_mode = val & 0x03;
+               ga_memory_manager();
+               if (val & 0x10) {
+                  z80.int_pending = 0;
+                  GateArray.sl_count = 0;
+               }
             }
             break;
 
@@ -366,6 +393,9 @@ __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair p
    if ((port.b.h & 0x40) == 0) {
       byte crtc_port = port.b.h & 3;
       if (crtc_port == 0) {
+         if (CPC.model > 2) {
+            asic_poke_lock_sequence(val);
+         }
          CRTC.reg_select = val;
       }
       else if (crtc_port == 1) {
@@ -510,8 +540,25 @@ __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair p
    }
 
    if ((port.b.h & 0x20) == 0) {
-      GateArray.upper_ROM = val;
-      set_upper_rom();
+      if (CPC.model > 2) {
+         /* CPC Plus ROM select: page from cartridge */
+         unsigned int page = 1; /* default to BASIC page */
+         if (val == 7) {
+            page = 3;
+         } else if (val >= 128) {
+            page = val & 31;
+         }
+         GateArray.upper_ROM = page;
+         byte *cpr_page = cpc_cartridge_get_page(page);
+         if (cpr_page) {
+            pbExpansionROM = cpr_page;
+         } else {
+            pbExpansionROM = pbROMhi;
+         }
+      } else {
+         GateArray.upper_ROM = val;
+         set_upper_rom();
+      }
       if ((GateArray.ROM_config & 0x08) == 0 && pbExpansionROM != nullptr) {
          membank_read[3] = pbExpansionROM;
       }
@@ -627,11 +674,12 @@ void emulator_reset()
    ga_init_banking(membank_config, GateArray.RAM_bank);
    video_set_palette();
    ga_memory_manager();
+   asic_reset();
 }
 
 int emulator_init()
 {
-   if (CPC.model > 2) {
+   if (CPC.model > 3) {
       CPC.model = 2;
    }
    if (CPC.ram_size == 0) {

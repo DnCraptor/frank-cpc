@@ -28,6 +28,7 @@
 #include "z80.h"
 #include "cap32.h"
 #include "crtc.h"
+#include "asic.h"
 #include "z80_macros.h"
 #include "z80daa.h"
 #include <cstring>
@@ -353,6 +354,14 @@ inline void write_mem_no_watchpoint(word addr, byte val) {
 }
 
 inline void write_mem(word addr, byte val) {
+  /* CPC Plus: intercept writes to ASIC register page at 0x4000-0x7FFF */
+  if (__builtin_expect(GateArray.registerPageOn && (addr & 0xC000) == 0x4000, 0)) {
+     if (CPC.model > 2) {
+        if (!asic_register_page_write(addr, val)) {
+           return; /* write consumed by ASIC, don't write to memory */
+        }
+     }
+  }
   write_mem_no_watchpoint(addr, val);
 }
 

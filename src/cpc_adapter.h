@@ -62,7 +62,7 @@ int cpc_snapshot_save(const char *path);
 int cpc_snapshot_load(const char *path);
 
 /* Settings — call before cpc_engine_init() or before cpc_engine_reset(). */
-void cpc_set_model(int model);       /* 0=464, 1=664, 2=6128 */
+void cpc_set_model(int model);       /* 0=464, 1=664, 2=6128, 3=6128+ */
 void cpc_set_ram_size(int kb);       /* 64, 128, or 576 */
 void cpc_set_rom(int slot, const char *path);
 

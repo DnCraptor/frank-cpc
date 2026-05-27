@@ -12,6 +12,7 @@
  */
 
 #include "cpc_cartridge.h"
+#include "cpc_adapter.h"
 
 #include "cap32/cap32.h"
 #include "cap32/disk.h"
@@ -180,7 +181,10 @@ int cpc_cartridge_insert(const char *path) {
     cartridge_path[sizeof(cartridge_path) - 1] = '\0';
     cartridge_loaded = true;
 
-    printf("cartridge: loaded %s (%d pages)\n", path, page_index);
+    /* CPR cartridges require CPC Plus mode (model 3) */
+    cpc_set_model(3);
+
+    printf("cartridge: loaded %s (%d pages), switching to CPC Plus mode\n", path, page_index);
     return 0;
 }
 
@@ -192,4 +196,9 @@ const char *cpc_cartridge_filename(void) {
     if (!cartridge_loaded || !cartridge_path[0]) return nullptr;
     const char *slash = std::strrchr(cartridge_path, '/');
     return slash ? slash + 1 : cartridge_path;
+}
+
+unsigned char *cpc_cartridge_get_page(int page) {
+    if (page < 0 || page >= CPR_MAX_PAGES) return nullptr;
+    return cartridge_pages[page];
 }

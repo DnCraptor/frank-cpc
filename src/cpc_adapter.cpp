@@ -12,12 +12,14 @@
 
 #include "cpc_adapter.h"
 #include "cpc_ipf.h"
+#include "cpc_cartridge.h"
 
 #include "cap32/cap32.h"
 #include "cap32/crtc.h"
 #include "cap32/z80.h"
 #include "cap32/disk.h"
 #include "cap32/tape.h"
+#include "cap32/asic.h"
 
 #include <cstring>
 #include <cstdio>
@@ -83,8 +85,8 @@ static int audio_out_count = 0;
 
 /* Direct render target: scanline callback writes here.
  * Platform sets this to point into the back screen buffer. */
-static byte *scanline_render_target = nullptr;
-static int scanline_render_stride = CPC_FB_WIDTH;
+byte *scanline_render_target = nullptr;
+int scanline_render_stride = CPC_FB_WIDTH;
 
 /* Scanline buffer in internal RAM — CRTC renders here instead of PSRAM.
  * At each HSYNC, the completed line is copied into cpc_fb.
@@ -346,7 +348,7 @@ static int load_tape_image(const char *path) {
 /* ------------------------------------------------------------------ */
 
 /* Vertical mapping constants — computed once in cpc_engine_init */
-static int fb_y_start = 0; /* first VDU.scrln that maps to cpc_fb row 0 */
+int fb_y_start = 0; /* first VDU.scrln that maps to cpc_fb row 0 */
 
 /* Called by CRTC at each HSYNC with completed scanline number.
  * Uses DMA to copy scanline data to PSRAM while CPU continues.
@@ -537,6 +539,15 @@ int cpc_engine_init(void) {
         return -1;
     }
 
+    /* Allocate ASIC register page in PSRAM (16KB for CPC Plus) */
+    if (!pbRegisterPage) {
+        pbRegisterPage = (byte *)psram_malloc(16384);
+        if (pbRegisterPage) {
+            std::memset(pbRegisterPage, 0, 16384);
+            printf("cpc_adapter: ASIC register page allocated (16KB)\n");
+        }
+    }
+
     /* Initialize engine */
     emulator_init();
     emulator_reset();
@@ -570,6 +581,11 @@ void cpc_engine_run_frame(void) {
         }
         crash_handler_feed();
     } while (exit_code != EC_FRAME_COMPLETE);
+
+    /* Draw CPC Plus sprites as overlay after frame completion */
+    if (CPC.model > 2) {
+        asic_draw_sprites();
+    }
 }
 
 void cpc_key_matrix_set(int row, int bit, int pressed) {
@@ -739,7 +755,7 @@ int cpc_snapshot_load(const char *path) {
 }
 
 void cpc_set_model(int model) {
-    if (model < 0 || model > 2) model = 2;
+    if (model < 0 || model > 3) model = 2;
     CPC.model = model;
 }
 

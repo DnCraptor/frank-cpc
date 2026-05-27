@@ -333,6 +333,7 @@ set(CAP32_ENGINE
     src/cap32/fdc.cpp
     src/cap32/disk.cpp
     src/cap32/tape.cpp
+    src/cap32/asic.cpp
     src/cpc_adapter.cpp
     src/cpc_cartridge.cpp
     src/cpc_ipf.cpp

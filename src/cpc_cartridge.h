@@ -32,6 +32,9 @@ int cpc_cartridge_is_loaded(void);
 /* Returns the filename of the currently loaded cartridge, or NULL. */
 const char *cpc_cartridge_filename(void);
 
+/* Returns the ROM page pointer for the given cartridge page (0-31), or NULL. */
+unsigned char *cpc_cartridge_get_page(int page);
+
 #ifdef __cplusplus
 }
 #endif

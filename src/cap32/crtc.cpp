@@ -23,6 +23,7 @@
 #include "cap32.h"
 #include "crtc.h"
 #include "z80.h"
+#include "asic.h"
 #include <cstring>
 #include <cstdio>
 extern "C" {
@@ -643,6 +644,7 @@ inline void match_hsw()
          CRTC.flag_inmonhsync = 1; // enter monitor HSYNC
          iMonHSStartPos = 0;
          iMonHSPeakToStart = iMonHSPeakPos;
+         asic_dma_cycle(); // CPC Plus: process DMA audio channels
       } else if (CRTC.hsw_count == 7) { // reached GA HSYNC output cutoff?
          change_mode();
          end_vdu_hsync();
@@ -760,6 +762,46 @@ void __attribute__((section(".time_critical.crtc"))) prerender_normal()
    *(RendPos + 2) = *(ModeMap + (bVidMem1 * 2));
    *(RendPos + 3) = *(ModeMap + (bVidMem1 * 2) + 1);
    RendPos += 4;
+}
+
+/* CPC Plus prerender with soft-scroll support (full width) */
+void prerender_normal_plus()
+{
+   unsigned int next_address = CRTC.next_address;
+   if (asic.vscroll) {
+      if (CRTC.raster_count + asic.vscroll <= (unsigned)CRTC.registers[9]) {
+         next_address += asic.vscroll * 0x0800;
+      } else {
+         next_address += 80;
+         next_address -= ((CRTC.registers[9] + 1 - asic.vscroll) * 0x0800);
+      }
+   }
+   byte bVidMem0 = getRAMByte(next_address);
+   byte bVidMem1 = getRAMByte(next_address + 1);
+   *RendPos = *(ModeMap + (bVidMem0 * 2));
+   *(RendPos + 1) = *(ModeMap + (bVidMem0 * 2) + 1);
+   *(RendPos + 2) = *(ModeMap + (bVidMem1 * 2));
+   *(RendPos + 3) = *(ModeMap + (bVidMem1 * 2) + 1);
+   RendPos += 4;
+}
+
+/* CPC Plus prerender with soft-scroll support (half width) */
+void prerender_normal_half_plus()
+{
+   unsigned int next_address = CRTC.next_address;
+   if (asic.vscroll) {
+      if (CRTC.raster_count + asic.vscroll <= (unsigned)CRTC.registers[9]) {
+         next_address += asic.vscroll * 0x0800;
+      } else {
+         next_address += 80;
+         next_address -= ((CRTC.registers[9] + 1 - asic.vscroll) * 0x0800);
+      }
+   }
+   byte bVidMem0 = getRAMByte(next_address);
+   byte bVidMem1 = getRAMByte(next_address + 1);
+   *RendPos = *(ModeMap + bVidMem0);
+   *(RendPos + 1) = *(ModeMap + bVidMem1);
+   RendPos += 2;
 }
 
 
@@ -1084,6 +1126,10 @@ void __attribute__((hot, section(".time_critical.crtc"))) crtc_cycle(int repeat_
 
       if (__builtin_expect(CRTC.flag_newscan, 0)) { // scanline change requested?
          CRTC.flag_newscan = 0;
+         /* CPC Plus: screen split — change CRTC address at specific scanline */
+         if (CRTC.split_sl && CRTC.sl_count == CRTC.split_sl) {
+            CRTC.next_addr = CRTC.split_addr;
+         }
          CRTC.addr = CRTC.next_addr;
          CRTC.sl_count++;
 
@@ -1187,7 +1233,11 @@ void crtc_init()
    ModeMap = ModeMaps[0];
 
    CPC.scr_render = render8bpp;
-   CPC.scr_prerendernorm = prerender_normal;
+   if (CPC.model > 2) {
+      CPC.scr_prerendernorm = prerender_normal_plus;
+   } else {
+      CPC.scr_prerendernorm = prerender_normal;
+   }
    CPC.scr_prerenderbord = prerender_border;
    CPC.scr_prerendersync = prerender_sync;
 
