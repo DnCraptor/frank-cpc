@@ -563,6 +563,10 @@ int cpc_engine_init(void) {
 void cpc_engine_reset(void) {
     emulator_reset();
     z80_sync_ram_shadow();
+    /* Restore standard CPC hardware palette after leaving Plus mode */
+    if (CPC.model <= 2) {
+        setup_hw_palette();
+    }
 }
 
 void cpc_engine_run_frame(void) {
@@ -571,6 +575,13 @@ void cpc_engine_run_frame(void) {
     /* Reset scanline buffer for new frame */
     CPC.scr_base = scanline_buf;
     CPC.scr_pos = scanline_buf;
+
+    /* Snapshot ASIC palette before rendering starts — captures
+       the "base" palette set during the previous vblank, before
+       raster effects modify entries mid-frame. */
+    if (CPC.model > 2) {
+        asic_snapshot_palette();
+    }
 
     do {
         exit_code = z80_execute();
@@ -582,8 +593,9 @@ void cpc_engine_run_frame(void) {
         crash_handler_feed();
     } while (exit_code != EC_FRAME_COMPLETE);
 
-    /* Draw CPC Plus sprites as overlay after frame completion */
+    /* Flush deferred ASIC palette changes and draw CPC Plus sprites */
     if (CPC.model > 2) {
+        asic_flush_palette();
         asic_draw_sprites();
     }
 }
@@ -828,12 +840,18 @@ uint8_t cpc_debug_read_mem(uint16_t addr) {
 }
 
 int cpc_debug_asic_dump(char *buf, int buflen) {
+    extern uint32_t asic_rgb[32];
     int n = snprintf(buf, buflen,
         "model=%d locked=%d hscroll=%u vscroll=%u split_sl=%d split_addr=%04X "
         "regPageOn=%d int_sl=%d",
         CPC.model, asic.locked, asic.hscroll, asic.vscroll,
         CRTC.split_sl, CRTC.split_addr,
         GateArray.registerPageOn, CRTC.interrupt_sl);
+    /* Dump all 32 palette RGB values */
+    n += snprintf(buf + n, buflen - n, "\nPAL:");
+    for (int i = 0; i < 32 && n < buflen - 10; i++) {
+        n += snprintf(buf + n, buflen - n, " %06X", asic_rgb[i]);
+    }
     /* Append active sprites */
     for (int i = 0; i < 16 && n < buflen - 40; i++) {
         if (asic.sprites_mag_x[i] > 0 && asic.sprites_mag_y[i] > 0) {

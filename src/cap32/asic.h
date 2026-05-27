@@ -62,5 +62,7 @@ void asic_poke_lock_sequence(byte val);
 void asic_dma_cycle();
 bool asic_register_page_write(word addr, byte val);
 void asic_draw_sprites();
+void asic_flush_palette();
+void asic_snapshot_palette();
 
 #endif

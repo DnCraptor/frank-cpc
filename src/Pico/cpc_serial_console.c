@@ -36,6 +36,7 @@
 #include "cpc_autotype.h"
 #include "cpc_loader.h"
 #include "crash_handler.h"
+#include "ff.h"
 
 #include "pico/stdlib.h"
 #include "hardware/structs/watchdog.h"
@@ -267,6 +268,20 @@ static void cmd_crtc(void) {
 
 /* ---- dispatch --------------------------------------------------------- */
 
+static void cmd_ls(const char *args) {
+    args = skip_ws(args);
+    const char *path = (*args) ? args : "/";
+    DIR dir;
+    FILINFO fno;
+    FRESULT fr = f_opendir(&dir, path);
+    if (fr != FR_OK) { printf("ERR opendir %d\n", fr); return; }
+    printf("OK LS %s\n", path);
+    while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0]) {
+        printf("# %s%s\n", fno.fname, (fno.fattrib & AM_DIR) ? "/" : "");
+    }
+    f_closedir(&dir);
+}
+
 static void dispatch_command(const char *line) {
     const char *p;
 
@@ -288,9 +303,10 @@ static void dispatch_command(const char *line) {
     else if ((p = match_prefix(line, "KEY")))     { cmd_key(p); }
     else if ((p = match_prefix(line, "CAT")))     { cmd_cat(); }
     else if ((p = match_prefix(line, "CD")))      { cmd_cd(p); }
+    else if ((p = match_prefix(line, "LS")))      { cmd_ls(p); }
     else if ((p = match_prefix(line, "CRTC")))    { cmd_crtc(); }
     else if ((p = match_prefix(line, "ASIC")))    {
-        char buf[512];
+        char buf[1024];
         cpc_debug_asic_dump(buf, sizeof(buf));
         printf("OK %s\n", buf);
     }

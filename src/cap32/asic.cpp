@@ -42,22 +42,39 @@ extern "C" {
     unsigned char *cpc_cartridge_get_page(int page);
 }
 
-static uint32_t asic_rgb[32]; /* cached RGB888 for each ASIC palette entry */
+uint32_t asic_rgb[32]; /* current RGB888 for each ASIC palette entry */
+static uint32_t asic_rgb_snapshot[32]; /* palette snapshot taken at frame start */
+static bool asic_snapshot_taken = false;
 
 static void asic_update_colour(int colour) {
    word raw = (pbRegisterPage[0x2400 + colour * 2]) |
               (pbRegisterPage[0x2400 + colour * 2 + 1] << 8);
-   /* Format: 0000GGGG 0RRRRBBB (each nibble 0-15, scale to 0-255) */
    unsigned int r = (raw >> 4) & 0x0F;
-   unsigned int g = raw >> 8;  /* high byte low nibble */
+   unsigned int g = (raw >> 8) & 0x0F;
    unsigned int b = raw & 0x0F;
-   /* Scale 4-bit to 8-bit: multiply by 17 (0→0, 15→255) */
    uint32_t rgb = (r * 17) << 16 | (g * 17) << 8 | (b * 17);
    asic_rgb[colour] = rgb;
-   /* Program into hardware palette */
-   graphics_set_palette((uint8_t)colour, rgb);
-   /* Update GateArray palette entry for renderer compatibility */
    GateArray.palette[colour] = colour;
+}
+
+/* Called by CRTC at the start of the visible area (after vblank).
+ * Snapshots the current palette so that raster effects during the frame
+ * don't cause flicker on our indexed-colour display. */
+void asic_snapshot_palette(void) {
+   if (CPC.model <= 2) return;
+   if (asic_snapshot_taken) return;
+   asic_snapshot_taken = true;
+   for (int i = 0; i < 32; i++) {
+      asic_rgb_snapshot[i] = asic_rgb[i];
+   }
+}
+
+void asic_flush_palette(void) {
+   /* Apply the snapshot taken at frame start */
+   for (int i = 0; i < 32; i++) {
+      graphics_set_palette((uint8_t)i, asic_rgb_snapshot[i]);
+   }
+   asic_snapshot_taken = false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -383,12 +400,10 @@ void asic_draw_sprites() {
    if (asic.locked) return;
    if (!scanline_render_target) return;
 
-   /* CPC Plus sprite coordinate system:
-    * X=0,Y=0 is the top-left of the visible screen area.
-    * In caprice32, sprites are drawn with sx += borderWidth because
-    * their framebuffer includes the border. In frank-cpc, the
-    * framebuffer starts at the visible area, so we just divide X by 2
-    * (sprite X is in half-mode-0-pixels = 2 framebuffer pixels per unit). */
+   /* CPC Plus sprite coordinate system (matching caprice32):
+    * Sprite X/Y coords are in CPC pixel units.  Our 320×240 framebuffer is
+    * half CPC horizontal resolution, so X must be divided by 2 AFTER adding
+    * the per-pixel offset (magnification + dx).  Y maps 1:1 to scanlines. */
    const int fb_w = 320;
    const int fb_h = 240;
 
@@ -401,25 +416,25 @@ void asic_draw_sprites() {
       int my = asic.sprites_mag_y[i];
       if (my == 0) continue;
 
-      /* Convert from CPC Plus coordinate space to framebuffer space.
-       * Sprite X is in half-MODE-0 pixels (= mode 1 pixels).
-       * Our 320px framebuffer maps 1:1 with mode 1 pixels.
-       * Sprite Y is in scanlines from the top of the visible area. */
-      int fbx = sx / 2;
-      int fby = sy;
-
       for (int x = 0; x < 16; x++) {
+         /* Early column clip in CPC coords */
+         int cpc_x_base = sx + x * mx;
+         if (cpc_x_base + mx <= 0) continue;
+         if (cpc_x_base / 2 >= fb_w) break;
+
          for (int y = 0; y < 16; y++) {
             byte p = asic.sprites[i][x][y];
             if (p == 0) continue; /* transparent */
 
             for (int dy = 0; dy < my; dy++) {
-               int py = fby + (y * my) + dy;
-               if (py < 0 || py >= fb_h) continue;
+               int py = sy + y * my + dy;
+               if (py < 0) continue;
+               if (py >= fb_h) break;
 
                for (int dx = 0; dx < mx; dx++) {
-                  int px = fbx + (x * mx) + dx;
-                  if (px < 0 || px >= fb_w) continue;
+                  int px = (cpc_x_base + dx) / 2;
+                  if (px < 0) continue;
+                  if (px >= fb_w) break;
 
                   scanline_render_target[py * scanline_render_stride + px] = p;
                }
