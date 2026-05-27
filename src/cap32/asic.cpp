@@ -53,6 +53,7 @@ uint32_t asic_rgb[32]; /* current RGB888 for each ASIC palette entry */
  * 32-255 = dynamically allocated for mid-frame changes. */
 static uint32_t dynamic_rgb[256];  /* RGB for each allocated slot */
 static int dyn_next = 32;          /* next free dynamic slot */
+static uint32_t frame_start_rgb[32]; /* palette snapshot at frame start */
 
 extern byte palette_byte[34];
 extern uint32_t *active_halfwidth_lut;
@@ -98,7 +99,11 @@ static void asic_update_colour(int colour) {
 }
 
 void asic_snapshot_palette(void) {
-   /* No-op — replaced by dynamic allocation */
+   /* Save the current ASIC palette as the "start of frame" state.
+    * This is used by asic_flush_palette() to restore the initial palette
+    * for hardware slots 0-31, so the next frame starts with the correct
+    * colors before any DMA-driven raster effects kick in. */
+   memcpy(frame_start_rgb, asic_rgb, sizeof(frame_start_rgb));
 }
 
 void asic_flush_palette(void) {
@@ -110,9 +115,13 @@ void asic_flush_palette(void) {
       }
       if (--pal_trace_frame <= 0) pal_trace_enabled = false;
    }
-   /* Program all base + dynamic palette entries to hardware */
+   /* Program all base + dynamic palette entries to hardware.
+    * Base slots 0-31 use the START-of-frame values (not end-of-frame)
+    * so that the next frame's top scanlines—rendered before any DMA
+    * raster effect reprograms the palette—use the correct initial colors
+    * instead of stale end-of-frame values (e.g., white during a fade). */
    for (int i = 0; i < 32; i++) {
-      graphics_set_palette((uint8_t)i, asic_rgb[i]);
+      graphics_set_palette((uint8_t)i, frame_start_rgb[i]);
    }
    for (int i = 32; i < dyn_next && i < 251; i++) {
       graphics_set_palette((uint8_t)i, dynamic_rgb[i]);
