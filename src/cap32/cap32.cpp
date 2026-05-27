@@ -98,8 +98,8 @@ void set_upper_rom()
    if (upper_rom != nullptr) {
       pbExpansionROM = upper_rom;
    }
-   else if (pbExpansionROM == nullptr) {
-      pbExpansionROM = pbROMhi;
+   else {
+      pbExpansionROM = pbROMhi; // empty bank reverts to BASIC ROM
    }
 }
 

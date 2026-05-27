@@ -351,13 +351,21 @@ static int fb_y_start = 0; /* first VDU.scrln that maps to cpc_fb row 0 */
 /* Called by CRTC at each HSYNC with completed scanline number.
  * Uses DMA to copy scanline data to PSRAM while CPU continues.
  * Double-buffers: CRTC switches to other buffer while DMA copies this one. */
+static volatile uint32_t dbg_scanline_calls = 0;
+static volatile uint32_t dbg_scanline_rendered = 0;
+static volatile uint8_t  dbg_last_pixel = 0xFF;
+
 void __attribute__((section(".time_critical.adapter"))) scanline_complete(int scrln) {
+    dbg_scanline_calls++;
     int fb_y = scrln - fb_y_start;
     if ((unsigned)fb_y >= (unsigned)CPC_FB_HEIGHT) return;
     if (!scanline_render_target) return;
+    dbg_scanline_rendered++;
 
     const uint32_t *src = (const uint32_t *)(scanline_buf + 32);
     uint32_t *dst = (uint32_t *)(scanline_render_target + fb_y * scanline_render_stride);
+    /* Capture first pixel value for debugging */
+    dbg_last_pixel = ((const uint8_t *)(scanline_buf + 32))[0];
     /* Copy 320 bytes = 80 words, unrolled 8× for pipeline efficiency */
     for (int i = 0; i < 80; i += 8) {
         uint32_t a = src[i], b = src[i+1], c = src[i+2], d = src[i+3];
@@ -754,6 +762,57 @@ void cpc_get_palette_rgb(uint32_t *rgb32) {
 
 uint8_t cpc_get_border_ink(void) {
     return (uint8_t)(GateArray.ink_values[16] & 0x1f);
+}
+
+int cpc_debug_crtc_dump(char *buf, int buflen) {
+    int n = snprintf(buf, buflen,
+        "R0=%d R1=%d R2=%d R3=$%02X R4=%d R5=%d R6=%d R7=%d R8=$%02X R9=%d "
+        "R12=$%02X R13=$%02X scrln=%d scanline=%d line_count=%d raster=%d "
+        "fb_y_start=%d mode=%d "
+        "inks=%02X.%02X.%02X.%02X border=%02X "
+        "ROM_cfg=%02X RAM_cfg=%02X RAM_bank=%02X "
+        "sl_calls=%u sl_rend=%u last_px=%02X",
+        CRTC.registers[0], CRTC.registers[1], CRTC.registers[2],
+        CRTC.registers[3], CRTC.registers[4], CRTC.registers[5],
+        CRTC.registers[6], CRTC.registers[7], CRTC.registers[8],
+        CRTC.registers[9], CRTC.registers[12], CRTC.registers[13],
+        VDU.scrln, VDU.scanline, CRTC.line_count, CRTC.raster_count,
+        crtc_fb_y_start, GateArray.requested_scr_mode,
+        GateArray.ink_values[0], GateArray.ink_values[1],
+        GateArray.ink_values[2], GateArray.ink_values[3],
+        GateArray.ink_values[16],
+        GateArray.ROM_config, GateArray.RAM_config, GateArray.RAM_bank,
+        dbg_scanline_calls, dbg_scanline_rendered, dbg_last_pixel);
+    dbg_scanline_calls = 0;
+    dbg_scanline_rendered = 0;
+    return n;
+}
+
+extern int fdc_trace_enabled;
+
+void cpc_fdc_set_trace(int enable) {
+    fdc_trace_enabled = enable;
+}
+
+int cpc_debug_z80_dump(char *buf, int buflen) {
+    int n = snprintf(buf, buflen,
+        "OK PC=%04X SP=%04X AF=%04X BC=%04X DE=%04X HL=%04X IX=%04X IY=%04X "
+        "I=%02X R=%02X IFF1=%d IFF2=%d IM=%d HALT=%d int_pending=%d "
+        "memR0=%s memR3=%s",
+        z80.PC.w.l, z80.SP.w.l, z80.AF.w.l, z80.BC.w.l, z80.DE.w.l, z80.HL.w.l,
+        z80.IX.w.l, z80.IY.w.l,
+        z80.I, z80.R, z80.IFF1, z80.IFF2, z80.IM, z80.HALT, z80.int_pending,
+        (membank_read[0] == pbRAM) ? "RAM" : "ROM",
+        (membank_read[3] == pbRAM + 0xC000) ? "RAM" : "ROM");
+    return n;
+}
+
+uint8_t cpc_debug_read_mem(uint16_t addr) {
+    return z80_read_mem(addr);
+}
+
+void cpc_debug_write_mem(uint16_t addr, uint8_t val) {
+    z80_write_mem(addr, val);
 }
 
 int cpc_audio_samples_ready(void) {

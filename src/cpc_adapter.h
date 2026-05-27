@@ -73,6 +73,20 @@ void cpc_get_palette_rgb(uint32_t *rgb32);
 /* Get the current border colour (ink index 0-31). */
 uint8_t cpc_get_border_ink(void);
 
+/* Debug: dump CRTC register state.  Writes a human-readable line into
+ * buf (at most buflen bytes).  Returns number of bytes written. */
+int cpc_debug_crtc_dump(char *buf, int buflen);
+
+/* Debug: dump Z80 register state. */
+int cpc_debug_z80_dump(char *buf, int buflen);
+
+/* Debug: read Z80 memory (through bank mapping). */
+uint8_t cpc_debug_read_mem(uint16_t addr);
+void cpc_debug_write_mem(uint16_t addr, uint8_t val);
+
+/* FDC trace control — defined in fdc.cpp */
+void cpc_fdc_set_trace(int enable);
+
 /* Sound: check if audio samples are ready after a frame. */
 int cpc_audio_samples_ready(void);
 /* Get pointer and count of pending audio samples (16-bit signed). */

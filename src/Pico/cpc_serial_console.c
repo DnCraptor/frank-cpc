@@ -259,6 +259,12 @@ static void cmd_cd(const char *args) {
     }
 }
 
+static void cmd_crtc(void) {
+    char buf[256];
+    cpc_debug_crtc_dump(buf, sizeof(buf));
+    printf("OK %s\n", buf);
+}
+
 /* ---- dispatch --------------------------------------------------------- */
 
 static void dispatch_command(const char *line) {
@@ -282,6 +288,39 @@ static void dispatch_command(const char *line) {
     else if ((p = match_prefix(line, "KEY")))     { cmd_key(p); }
     else if ((p = match_prefix(line, "CAT")))     { cmd_cat(); }
     else if ((p = match_prefix(line, "CD")))      { cmd_cd(p); }
+    else if ((p = match_prefix(line, "CRTC")))    { cmd_crtc(); }
+    else if ((p = match_prefix(line, "Z80")))     {
+        char buf[320];
+        cpc_debug_z80_dump(buf, sizeof(buf));
+        printf("%s\n", buf);
+    }
+    else if ((p = match_prefix(line, "MEM")))     {
+        p = skip_ws(p);
+        unsigned int addr = 0;
+        int count = 32;
+        sscanf(p, "%x %d", &addr, &count);
+        if (count > 256) count = 256;
+        printf("OK %04X:", addr);
+        for (int i = 0; i < count; i++) {
+            printf(" %02X", cpc_debug_read_mem((uint16_t)(addr + i)));
+        }
+        printf("\n");
+    }
+    else if ((p = match_prefix(line, "POKE")))    {
+        p = skip_ws(p);
+        unsigned int addr = 0, val = 0;
+        if (sscanf(p, "%x %x", &addr, &val) == 2 && val <= 0xFF) {
+            cpc_debug_write_mem((uint16_t)addr, (uint8_t)val);
+            printf("OK POKE %04X=%02X\n", addr, val);
+        } else {
+            printf("ERR usage: POKE <hex_addr> <hex_val>\n");
+        }
+    }
+    else if ((p = match_prefix(line, "FDC TRACE"))) {
+        p = skip_ws(p);
+        if (*p == '1' || (p[0]=='O' && p[1]=='N')) { cpc_fdc_set_trace(1); printf("OK FDC trace ON\n"); }
+        else { cpc_fdc_set_trace(0); printf("OK FDC trace OFF\n"); }
+    }
     else { printf("ERR unknown command. Try HELP\n"); }
 }
 

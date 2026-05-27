@@ -35,6 +35,9 @@ extern t_FDC FDC;
 
 static byte pbGPBuffer[MAX_TRACK_SIZE];
 
+/* Runtime FDC trace: set via serial console */
+int fdc_trace_enabled = 0;
+
 #ifdef DEBUG_FDC
 extern FILE *pfoDebug;
 dword dwBytesTransferred = 0;
@@ -266,6 +269,11 @@ inline void cmd_read()
 loop:
    sector = find_sector(&FDC.command[CMD_C]); // locate the requested sector on the current track
    if (sector) { // sector found
+      if (fdc_trace_enabled) {
+         printf("# FDC cmd_read FOUND C=%d H=%d R=0x%02X N=%d\n",
+            FDC.command[CMD_C], FDC.command[CMD_H],
+            FDC.command[CMD_R], FDC.command[CMD_N]);
+      }
       FDC.result[RES_ST1] = sector->flags[0] & 0x25; // copy ST1 to result, ignoring unused bits
       FDC.result[RES_ST2] = sector->flags[1] & 0x61; // copy ST2 to result, ignoring unused bits
       if (FDC.command[CMD_CODE] == 0x4c) { // read deleted data command?
@@ -307,6 +315,12 @@ loop:
       }
    }
    else { // sector not found
+      if (fdc_trace_enabled) {
+         printf("# FDC cmd_read NOT FOUND C=%d H=%d R=0x%02X N=%d curtrk=%d cursec=%d\n",
+            FDC.command[CMD_C], FDC.command[CMD_H],
+            FDC.command[CMD_R], FDC.command[CMD_N],
+            active_drive->current_track, active_drive->current_sector);
+      }
       FDC.result[RES_ST0] |= 0x40; // AT
       FDC.result[RES_ST1] |= 0x04; // No Data
 
@@ -620,6 +634,12 @@ byte fdc_read_data()
                FDC.buffer_ptr = active_track->data; // wrap around
             }
             if (!(--FDC.buffer_count)) { // completed the data transfer?
+               if (fdc_trace_enabled) {
+                  printf("# FDC xfer done R=0x%02X EOT=0x%02X st1=%02X st2=%02X overrun=%d\n",
+                     FDC.command[CMD_R], FDC.command[CMD_EOT],
+                     FDC.result[RES_ST1], FDC.result[RES_ST2],
+                     (FDC.flags & OVERRUN_flag) ? 1 : 0);
+               }
                if (FDC.flags & RNDDE_flag) { // simulate random Data Errors?
 // ***! random DE handling
                }
@@ -888,6 +908,13 @@ void fdc_read()
          side = side ? 0 : 1; // reverse the side to access
       }
       active_track = &active_drive->track[active_drive->current_track][side];
+      if (fdc_trace_enabled) {
+         printf("# FDC READ t=%d s=%d C=%d H=%d R=0x%02X N=%d EOT=0x%02X secs=%d\n",
+            active_drive->current_track, (int)side,
+            FDC.command[CMD_C], FDC.command[CMD_H],
+            FDC.command[CMD_R], FDC.command[CMD_N],
+            FDC.command[CMD_EOT], active_track->sectors);
+      }
       if (active_track->sectors != 0) { // track is formatted?
          cmd_read();
       }
