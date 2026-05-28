@@ -87,6 +87,15 @@ static uint32_t mouse_sync_errors = 0;
 static volatile uint32_t mouse_raw_bytes = 0;
 static uint32_t mouse_valid_packets_total = 0;
 
+// Keyboard ring buffer — mirrors mouse ring buffer to prevent PIO FIFO
+// overflow during rapid key sequences (e.g. Shift+Arrow in Prince of Persia).
+// The 8-entry PIO FIFO overflows when >8 PS/2 bytes arrive in one 20ms frame.
+#define KBD_RX_BUFFER_SIZE 64
+static volatile uint8_t kbd_rx_buffer[KBD_RX_BUFFER_SIZE];
+static volatile uint8_t kbd_rx_head = 0;  // ISR writes here
+static volatile uint8_t kbd_rx_tail = 0;  // Main loop reads from here
+static volatile uint32_t kbd_overflow_count = 0;
+
 //=============================================================================
 // PIO Helpers
 //=============================================================================
@@ -102,6 +111,51 @@ static void pio_sm_restart_rx(PIO pio, uint sm) {
     // Jump to program start (wrap_target = offset 0)
     pio_sm_exec(pio, sm, pio_encode_jmp(ps2_program_offset));
     pio_sm_set_enabled(pio, sm, true);
+}
+
+//=============================================================================
+// Keyboard PIO Interrupt Handler
+//=============================================================================
+
+// Drain keyboard PIO RX FIFO into the ring buffer. Called from IRQ and from
+// ps2_kbd_get_byte() as a poll-path backup (IRQ can be unreliable on RP2350).
+static void kbd_pio_drain(void) {
+    if (!kbd_pio) return;
+    while (!pio_sm_is_rx_fifo_empty(kbd_pio, kbd_sm)) {
+        uint32_t raw = pio_sm_get(kbd_pio, kbd_sm);
+        if (raw == 0) continue;
+        int result = ps2_rx_decode_frame(raw);
+        if (result >= 0) {
+            uint8_t next_head = (kbd_rx_head + 1) % KBD_RX_BUFFER_SIZE;
+            if (next_head != kbd_rx_tail) {
+                kbd_rx_buffer[kbd_rx_head] = (uint8_t)result;
+                kbd_rx_head = next_head;
+            } else {
+                kbd_overflow_count++;
+            }
+        }
+        // Frame/parity errors: silently discard (same as mouse driver)
+    }
+}
+
+static void kbd_pio_irq_handler(void) {
+    kbd_pio_drain();
+}
+
+static uint kbd_irq_num(void) {
+    if (kbd_pio == pio0) return PIO0_IRQ_0;
+    if (kbd_pio == pio1) return PIO1_IRQ_0;
+#ifdef PIO2_IRQ_0
+    if (kbd_pio == pio2) return PIO2_IRQ_0;
+#endif
+    return PIO0_IRQ_0;
+}
+
+static void kbd_enable_irq(void) {
+    uint irq_num = kbd_irq_num();
+    pio_set_irqn_source_enabled(kbd_pio, 0, pis_sm0_rx_fifo_not_empty + kbd_sm, true);
+    irq_set_exclusive_handler(irq_num, kbd_pio_irq_handler);
+    irq_set_enabled(irq_num, true);
 }
 
 //=============================================================================
@@ -773,6 +827,7 @@ bool ps2_init(PIO pio, uint kbd_clk, uint mouse_clk) {
     // Initialize keyboard state machine
     ps2_rx_program_init(pio, kbd_sm, ps2_program_offset, kbd_clk);
     kbd_initialized = true;
+    kbd_enable_irq();
     
     // Initialize mouse state machine
     ps2_rx_program_init(pio, mouse_sm, ps2_program_offset, mouse_clk);
@@ -805,6 +860,7 @@ bool ps2_kbd_pio_init(PIO pio, uint kbd_clk) {
 
     ps2_rx_program_init(pio, kbd_sm, kbd_program_offset, kbd_clk);
     kbd_initialized = true;
+    kbd_enable_irq();
     return true;
 }
 
@@ -1020,12 +1076,13 @@ uint32_t ps2_mouse_pio_fifo_level(void) {
 }
 
 //=============================================================================
-// Public API - Keyboard (raw access)
+// Public API - Keyboard (ring-buffered access)
 //=============================================================================
 
 bool ps2_kbd_has_data(void) {
     if (!kbd_pio) return false;
-    return !pio_sm_is_rx_fifo_empty(kbd_pio, kbd_sm);
+    kbd_pio_drain();  // poll-path: move any new PIO bytes into ring buffer
+    return kbd_rx_head != kbd_rx_tail;
 }
 
 uint32_t ps2_kbd_get_raw(void) {
@@ -1036,9 +1093,10 @@ uint32_t ps2_kbd_get_raw(void) {
 }
 
 int ps2_kbd_get_byte(void) {
-    if (!kbd_pio || pio_sm_is_rx_fifo_empty(kbd_pio, kbd_sm)) {
-        return -1;
-    }
-    uint32_t raw = pio_sm_get(kbd_pio, kbd_sm);
-    return ps2_rx_decode_frame(raw);
+    if (!kbd_pio) return -1;
+    kbd_pio_drain();  // poll-path: move any new PIO bytes into ring buffer
+    if (kbd_rx_head == kbd_rx_tail) return -1;  // ring buffer empty
+    uint8_t data = kbd_rx_buffer[kbd_rx_tail];
+    kbd_rx_tail = (kbd_rx_tail + 1) % KBD_RX_BUFFER_SIZE;
+    return data;
 }

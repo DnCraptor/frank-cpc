@@ -418,7 +418,12 @@ void cpc_ps2_feed_events(void) {
                 continue;
             }
         } else {
-            if (cpc_ui_wants_keys()) continue;
+            /* Release events must always reach the matrix — if the UI
+             * overlay opens while a key is held, the release would be
+             * swallowed and the key stays "pressed" in the CPC. */
+            if (cpc_ui_wants_keys()) {
+                /* fall through to matrix update below */
+            }
         }
 
         /* Direct CPC keyboard matrix manipulation.
