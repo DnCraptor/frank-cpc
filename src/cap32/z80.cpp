@@ -29,6 +29,8 @@
 #include "cap32.h"
 #include "crtc.h"
 #include "asic.h"
+#include "cpc_dandanator.h"
+#include "tape_fastload.h"
 #include "z80_macros.h"
 #include "z80daa.h"
 #include <cstring>
@@ -38,6 +40,7 @@ extern t_FDC FDC;
 extern t_GateArray GateArray;
 extern t_PSG PSG;
 extern t_VDU VDU;
+extern asic_t asic;
 extern byte *membank_read[4], *membank_write[4];
 byte *membank_read_fast[4]; /* always SRAM: shadow for lower 64KB RAM, direct for ROM */
 extern byte *pbRAM;
@@ -47,6 +50,8 @@ extern void Tape_UpdateLevel();
 extern byte fdc_read_data();
 extern void fdc_write_data(byte val);
 extern void Synthesizer_Stereo16();
+extern "C" int cpc_mf2_read(word addr, byte *val);
+extern "C" int cpc_mf2_write(word addr, byte val);
 
 enum {
    FDC_TO_CPU = 0,
@@ -335,14 +340,25 @@ static byte cc_ex[256] = {
 byte ram_shadow[65536] __attribute__((aligned(4)));
 
 inline byte read_mem_no_watchpoint(word addr) {
+  byte mf2_val;
+  if (__builtin_expect(addr < 0x4000 && cpc_mf2_read(addr, &mf2_val), 0)) {
+    return mf2_val;
+  }
   return membank_read_fast[addr >> 14][addr & 0x3fff];
 }
 
 inline byte read_mem(word addr) {
+  byte mf2_val;
+  if (__builtin_expect(addr < 0x4000 && cpc_mf2_read(addr, &mf2_val), 0)) {
+    return mf2_val;
+  }
   return membank_read_fast[addr >> 14][addr & 0x3fff];
 }
 
 inline void write_mem_no_watchpoint(word addr, byte val) {
+  if (__builtin_expect(addr < 0x4000 && cpc_mf2_write(addr, val), 0)) {
+    return;
+  }
   byte *bank = membank_write[addr >> 14];
   word offset = addr & 0x3fff;
   *(bank + offset) = val; // write to PSRAM
@@ -588,6 +604,7 @@ void z80_sync_ram_shadow() {
 { \
    z80.PC.b.l = read_mem(_SP++); \
    z80.PC.b.h = read_mem(_SP++); \
+   dandanator_trap_ret(); \
 }
 
 #define RLA \
@@ -971,12 +988,26 @@ inline byte SRL(byte val) {
          } \
          write_mem(--_SP, z80.PC.b.h); /* store high byte of current PC */ \
          write_mem(--_SP, z80.PC.b.l); /* store low byte of current PC */ \
-         addr.b.l = 0xff; /* assemble pointer */ \
+         if (CPC.model > 2 && asic.irq_cause > 0) { \
+            byte source_offset; \
+            switch (asic.irq_cause) { \
+               case 1: source_offset = 6; break; /* raster (PRI) */ \
+               case 2: source_offset = 4; break; /* DMA ch2 */ \
+               case 3: source_offset = 2; break; /* DMA ch1 */ \
+               case 4: source_offset = 0; break; /* DMA ch0 */ \
+               default: source_offset = 0; break; \
+            } \
+            addr.b.l = (asic.interrupt_vector & 0xF8) | source_offset; \
+         } \
+         else { \
+            addr.b.l = 0xff; /* standard CPC: Gate Array puts 0xFF on bus */ \
+         } \
          addr.b.h = _I; \
          z80.PC.b.l = read_mem(addr.w.l); /* retrieve low byte of vector */ \
          z80.PC.b.h = read_mem(addr.w.l+1); /* retrieve high byte of vector */ \
          z80_wait_states \
       } \
+      if (CPC.model > 2) asic.irq_cause = 0; \
    } \
 }
 
@@ -1031,8 +1062,14 @@ static inline __attribute__((always_inline, section(".time_critical.z80"))) void
 __attribute__((section(".time_critical.z80"))) int z80_execute()
 {
    while (true) {
+      if (__builtin_expect((CPC.tape_motor) && (CPC.tape_play_button), 0)) {
+         if (tape_try_fastload()) {
+            continue;
+         }
+      }
+
       z80_execute_instruction();
-      
+
       iCycleCount += iWSAdjust;
       z80_wait_states
 
@@ -1784,7 +1821,7 @@ __attribute__((section(".time_critical.z80"))) void z80_execute_pfx_dd_instructi
       case ld_l_mhl:    { signed char o = read_mem(_PC++); _L = read_mem(_IX+o); } break;
       case ld_mbc_a:    write_mem(_BC, _A); break;
       case ld_mde_a:    write_mem(_DE, _A); break;
-      case ld_mhl_a:    { signed char o = read_mem(_PC++); write_mem(_IX+o, _A); } break;
+      case ld_mhl_a:    { byte d = read_mem(_PC++); signed char o = static_cast<signed char>(d); write_mem(_IX+o, _A); dandanator_trap_write(static_cast<uint16_t>(_PC - 3), d, _A); } break;
       case ld_mhl_b:    { signed char o = read_mem(_PC++); write_mem(_IX+o, _B); } break;
       case ld_mhl_byte: { signed char o = read_mem(_PC++); byte b = read_mem(_PC++); write_mem(_IX+o, b); } break;
       case ld_mhl_c:    { signed char o = read_mem(_PC++); write_mem(_IX+o, _C); } break;
@@ -2595,7 +2632,7 @@ __attribute__((section(".time_critical.z80"))) void z80_execute_pfx_fd_instructi
       case ld_l_mhl:    { signed char o = read_mem(_PC++); _L = read_mem(_IY+o); } break;
       case ld_mbc_a:    write_mem(_BC, _A); break;
       case ld_mde_a:    write_mem(_DE, _A); break;
-      case ld_mhl_a:    { signed char o = read_mem(_PC++); write_mem(_IY+o, _A); } break;
+      case ld_mhl_a:    { byte d = read_mem(_PC++); signed char o = static_cast<signed char>(d); write_mem(_IY+o, _A); dandanator_trap_write(static_cast<uint16_t>(_PC - 3), d, _A); } break;
       case ld_mhl_b:    { signed char o = read_mem(_PC++); write_mem(_IY+o, _B); } break;
       case ld_mhl_byte: { signed char o = read_mem(_PC++); byte b = read_mem(_PC++); write_mem(_IY+o, b); } break;
       case ld_mhl_c:    { signed char o = read_mem(_PC++); write_mem(_IY+o, _C); } break;

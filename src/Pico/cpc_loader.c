@@ -69,6 +69,16 @@ static int is_cpr(const char *name) {
     return (e1 == 'c' && e2 == 'p' && e3 == 'r');
 }
 
+static int is_dan(const char *name) {
+    size_t n = strlen(name);
+    if (n < 5) return 0;
+    if (name[n-4] != '.') return 0;
+    char e1 = tolower((unsigned char)name[n-3]);
+    char e2 = tolower((unsigned char)name[n-2]);
+    char e3 = tolower((unsigned char)name[n-1]);
+    return (e1 == 'd' && e2 == 'a' && e3 == 'n');
+}
+
 static int is_ipf(const char *name) {
     size_t n = strlen(name);
     if (n < 5) return 0;
@@ -80,7 +90,7 @@ static int is_ipf(const char *name) {
 }
 
 static int is_media(const char *name) {
-    return is_dsk(name) || is_tape(name) || is_cpr(name);
+    return is_dsk(name) || is_tape(name) || is_cpr(name) || is_dan(name);
 }
 
 static cpc_filter_t g_filter = CPC_FILTER_DISK;
@@ -93,7 +103,7 @@ static int matches_filter(const char *name) {
     switch (g_filter) {
         case CPC_FILTER_DISK:      return is_dsk(name);
         case CPC_FILTER_TAPE:      return is_tape(name);
-        case CPC_FILTER_CARTRIDGE: return is_cpr(name);
+        case CPC_FILTER_CARTRIDGE: return is_cpr(name) || is_dan(name);
         default:                   return is_media(name);
     }
 }
@@ -255,6 +265,10 @@ int cpc_is_tape_file(const char *name) {
 
 int cpc_is_cpr_file(const char *name) {
     return is_cpr(name);
+}
+
+int cpc_is_dan_file(const char *name) {
+    return is_dan(name);
 }
 
 int cpc_is_ipf_file(const char *name) {

@@ -69,6 +69,7 @@ t_drive *driveB_p = nullptr;
 
 /* CRTC globals */
 dword dwXScale = 1;
+extern int crtc_type;
 
 /* Debug stubs (referenced by crtc.cpp and fdc.cpp) */
 dword dwDebugFlag = 0;
@@ -148,8 +149,11 @@ void Calculate_Level_Tables();
  * in SRAM eliminates PSRAM latency on every ROM fetch. */
 static byte rom_buffer_sram[32768] __attribute__((aligned(4)));
 static byte amsdos_rom_sram[16384] __attribute__((aligned(4)));
+static byte mf2_rom[8192] __attribute__((aligned(4)));
+static byte *mf2_ram = nullptr;
 static byte *rom_buffer = rom_buffer_sram;
 static byte *amsdos_rom = amsdos_rom_sram;
+static bool mf2_rom_loaded = false;
 
 static int load_rom_file(const char *path, byte *dest, int max_size) {
     FIL f;
@@ -158,6 +162,33 @@ static int load_rom_file(const char *path, byte *dest, int max_size) {
     f_read(&f, dest, (UINT)max_size, &br);
     f_close(&f);
     return (int)br;
+}
+
+static int load_mf2_rom(void) {
+    FIL f;
+    if (f_open(&f, "/cpc/rom/mf2.rom", FA_READ) != FR_OK) {
+        printf("cpc_adapter: mf2.rom not found\n");
+        return -1;
+    }
+
+    UINT br = 0;
+    f_read(&f, mf2_rom, sizeof(mf2_rom), &br);
+    f_close(&f);
+    if (br < sizeof(mf2_rom)) {
+        printf("cpc_adapter: mf2.rom too small (%u bytes)\n", (unsigned)br);
+        return -1;
+    }
+
+    mf2_rom_loaded = true;
+    printf("cpc_adapter: Multiface II ROM loaded\n");
+    return 0;
+}
+
+static void mf2_reset_state(void) {
+    if (mf2_ram) {
+        std::memset(mf2_ram, 0, 8192);
+    }
+    CPC.mf2 = (mf2_rom_loaded && mf2_ram) ? MF2_ACTIVE : 0;
 }
 
 static int load_roms(void) {
@@ -574,11 +605,19 @@ int cpc_engine_init(void) {
     std::memset(pbRAM, 0, ram_bytes);
     printf("cpc_adapter: allocated %d KB CPC RAM in PSRAM\n", CPC.ram_size);
 
+    if (!mf2_ram) {
+        mf2_ram = (byte *)psram_malloc(8192);
+        if (!mf2_ram) {
+            printf("cpc_adapter: MF2 RAM alloc failed\n");
+        }
+    }
+
     /* Load ROMs */
     if (load_roms() != 0) {
         printf("cpc_adapter: ROM loading failed\n");
         return -1;
     }
+    load_mf2_rom();
 
     /* Allocate ASIC register page in PSRAM (16KB for CPC Plus) */
     if (!pbRegisterPage) {
@@ -592,6 +631,7 @@ int cpc_engine_init(void) {
     /* Initialize engine */
     emulator_init();
     emulator_reset();
+    mf2_reset_state();
     z80_sync_ram_shadow(); /* copy CPC RAM to SRAM shadow for fast reads */
 
     /* Set up hardware palette, then re-apply green monitor if active */
@@ -604,12 +644,65 @@ int cpc_engine_init(void) {
 
 void cpc_engine_reset(void) {
     emulator_reset();
+    mf2_reset_state();
     z80_sync_ram_shadow();
     /* Restore standard CPC hardware palette after leaving Plus mode */
     if (CPC.model <= 2) {
         setup_hw_palette();
         cpc_apply_green_monitor(g_cpc_settings.monitor);
     }
+}
+
+void cpc_mf2_page_in(void) {
+    if (!mf2_rom_loaded || !mf2_ram || (CPC.mf2 & MF2_INVISIBLE)) {
+        return;
+    }
+    CPC.mf2 |= MF2_ACTIVE | MF2_RUNNING;
+}
+
+void cpc_mf2_page_out(void) {
+    CPC.mf2 &= ~MF2_RUNNING;
+    ga_memory_manager();
+}
+
+int cpc_mf2_available(void) {
+    return (mf2_rom_loaded && mf2_ram) ? 1 : 0;
+}
+
+int cpc_mf2_read(uint16_t addr, uint8_t *val) {
+    if (!val || !mf2_ram || (CPC.mf2 & MF2_RUNNING) == 0 || addr >= 0x4000) {
+        return 0;
+    }
+    if (addr < 0x2000) {
+        *val = mf2_rom[addr];
+    } else {
+        *val = mf2_ram[addr - 0x2000];
+    }
+    return 1;
+}
+
+int cpc_mf2_write(uint16_t addr, uint8_t val) {
+    if (!mf2_ram || (CPC.mf2 & MF2_RUNNING) == 0 || addr < 0x2000 || addr >= 0x4000) {
+        return 0;
+    }
+    mf2_ram[addr - 0x2000] = val;
+    return 1;
+}
+
+void cpc_mf2_stop(void) {
+    if (!mf2_rom_loaded || !mf2_ram || (CPC.mf2 & MF2_INVISIBLE)) {
+        return;
+    }
+
+    cpc_mf2_page_in();
+
+    z80.IFF2 = z80.IFF1;
+    z80.IFF1 = 0;
+    z80.HALT = 0;
+    z80.EI_issued = 0;
+    z80_write_mem((word)(--z80.SP.w.l), z80.PC.b.h);
+    z80_write_mem((word)(--z80.SP.w.l), z80.PC.b.l);
+    z80.PC.w.l = 0x0066;
 }
 
 void cpc_engine_run_frame(void) {
@@ -727,9 +820,93 @@ void cpc_tape_rewind(void) {
 }
 
 int cpc_snapshot_save(const char *path) {
-    /* TODO: implement SNA save with caprice32 structures */
-    (void)path;
-    return -1;
+    t_SNA_header sh;
+    std::memset(&sh, 0, sizeof(sh));
+
+    /* Identifier */
+    std::memcpy(sh.id, "MV - SNA", 8);
+    sh.version = 3; /* SNA v3 — supports 128K+ */
+
+    /* Z80 registers */
+    sh.AF[0] = z80.AF.b.l; sh.AF[1] = z80.AF.b.h;
+    sh.BC[0] = z80.BC.b.l; sh.BC[1] = z80.BC.b.h;
+    sh.DE[0] = z80.DE.b.l; sh.DE[1] = z80.DE.b.h;
+    sh.HL[0] = z80.HL.b.l; sh.HL[1] = z80.HL.b.h;
+    sh.IX[0] = z80.IX.b.l; sh.IX[1] = z80.IX.b.h;
+    sh.IY[0] = z80.IY.b.l; sh.IY[1] = z80.IY.b.h;
+    sh.SP[0] = z80.SP.b.l; sh.SP[1] = z80.SP.b.h;
+    sh.PC[0] = z80.PC.b.l; sh.PC[1] = z80.PC.b.h;
+    sh.AFx[0] = z80.AFx.b.l; sh.AFx[1] = z80.AFx.b.h;
+    sh.BCx[0] = z80.BCx.b.l; sh.BCx[1] = z80.BCx.b.h;
+    sh.DEx[0] = z80.DEx.b.l; sh.DEx[1] = z80.DEx.b.h;
+    sh.HLx[0] = z80.HLx.b.l; sh.HLx[1] = z80.HLx.b.h;
+    sh.I = z80.I;
+    sh.R = z80.R;
+    sh.IFF0 = z80.IFF1;
+    sh.IFF1 = z80.IFF2;
+    sh.IM = z80.IM;
+    sh.z80_int_pending = z80.int_pending;
+
+    /* Gate Array */
+    sh.ga_pen = GateArray.pen;
+    std::memcpy(sh.ga_ink_values, GateArray.ink_values, 17);
+    sh.ga_ROM_config = GateArray.ROM_config;
+    sh.ga_RAM_config = GateArray.RAM_config;
+    sh.upper_ROM = GateArray.upper_ROM;
+    sh.ga_sl_count = GateArray.sl_count;
+    sh.ga_int_delay = GateArray.int_delay;
+    sh.scr_modes[0] = (unsigned char)(GateArray.scr_mode & 3);
+
+    /* CRTC */
+    sh.crtc_reg_select = CRTC.reg_select;
+    std::memcpy(sh.crtc_registers, CRTC.registers, 18);
+    sh.crtc_type = (unsigned char)crtc_type;
+    sh.crtc_line_count = (unsigned char)CRTC.line_count;
+    sh.crtc_raster_count = (unsigned char)CRTC.raster_count;
+    sh.crtc_hsw_count = (unsigned char)CRTC.hsw_count;
+    sh.crtc_vsw_count = (unsigned char)CRTC.vsw_count;
+    {
+        unsigned int f = 0;
+        if (CRTC.flag_invsync) f |= VS_flag;
+        sh.crtc_flags[0] = (unsigned char)(f & 0xFF);
+        sh.crtc_flags[1] = (unsigned char)((f >> 8) & 0xFF);
+    }
+
+    /* PPI */
+    sh.ppi_A = PPI.portA;
+    sh.ppi_B = PPI.portB;
+    sh.ppi_C = PPI.portC;
+    sh.ppi_control = PPI.control;
+
+    /* PSG */
+    sh.psg_reg_select = PSG.reg_select;
+    std::memcpy(sh.psg_registers, PSG.RegisterAY.Index, 16);
+
+    /* FDC */
+    sh.fdc_motor = (unsigned char)FDC.motor;
+    sh.drvA_current_track = (unsigned char)driveA.current_track;
+    sh.drvB_current_track = (unsigned char)driveB.current_track;
+
+    /* CPC model and RAM size */
+    sh.cpc_model = (unsigned char)CPC.model;
+    sh.ram_size[0] = (unsigned char)(CPC.ram_size & 0xFF);
+    sh.ram_size[1] = (unsigned char)((CPC.ram_size >> 8) & 0xFF);
+
+    /* Write to file */
+    FIL f;
+    if (f_open(&f, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return -1;
+
+    UINT bw;
+    f_write(&f, &sh, sizeof(sh), &bw);
+    if (bw < sizeof(sh)) { f_close(&f); return -1; }
+
+    /* Write RAM dump */
+    dword ram_bytes = (dword)CPC.ram_size * 1024;
+    f_write(&f, pbRAM, ram_bytes, &bw);
+    f_close(&f);
+
+    printf("cpc_adapter: snapshot saved (%lu KB)\n", (unsigned long)CPC.ram_size);
+    return 0;
 }
 
 int cpc_snapshot_load(const char *path) {
@@ -787,6 +964,8 @@ int cpc_snapshot_load(const char *path) {
     /* Restore CRTC */
     CRTC.reg_select = sh.crtc_reg_select;
     std::memcpy(CRTC.registers, sh.crtc_registers, 18);
+    crtc_type = (sh.crtc_type <= 4) ? sh.crtc_type : 0;
+    crtc_update_r3();
 
     /* Restore PPI */
     PPI.portA = sh.ppi_A;
@@ -829,6 +1008,12 @@ void cpc_set_rom(int slot, const char *path) {
 
 void cpc_set_jumpers(unsigned int jumpers) {
     CPC.jumpers = jumpers;
+}
+
+void cpc_set_crtc_type(int type) {
+    if (type < 0 || type > 4) type = 0;
+    crtc_type = type;
+    crtc_update_r3();
 }
 
 void cpc_set_speed(unsigned int speed) {
@@ -1040,6 +1225,94 @@ int CreateBlankDsk(const char *path) {
     }
 
     f_close(&f);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Screenshot: save framebuffer as 8bpp BMP to SD card                */
+/* ------------------------------------------------------------------ */
+
+int cpc_screenshot_save(void) {
+    if (!scanline_render_target) return -1;
+
+    /* Ensure /cpc/screenshot/ directory exists */
+    f_mkdir("/cpc");
+    f_mkdir("/cpc/screenshot");
+
+    /* Find next available filename CPC_0001.BMP .. CPC_9999.BMP */
+    char path[40];
+    FIL f;
+    int num;
+    for (num = 1; num <= 9999; num++) {
+        snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", num);
+        if (f_open(&f, path, FA_READ) != FR_OK) break; /* file doesn't exist — use it */
+        f_close(&f);
+    }
+    if (num > 9999) return -1;
+
+    /* BMP file layout (8bpp indexed):
+     * 14-byte file header + 40-byte DIB header + 1024-byte palette + pixel data
+     * BMP stores rows bottom-to-top. */
+    const int W = CPC_FB_WIDTH;   /* 320 */
+    const int H = CPC_FB_HEIGHT;  /* 240 */
+    const int row_bytes = (W + 3) & ~3; /* pad to 4-byte boundary */
+    const uint32_t palette_size = 256 * 4;
+    const uint32_t pixel_offset = 14 + 40 + palette_size;
+    const uint32_t pixel_data_size = (uint32_t)row_bytes * H;
+    const uint32_t file_size = pixel_offset + pixel_data_size;
+
+    if (f_open(&f, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return -1;
+
+    UINT bw;
+
+    /* BMP file header (14 bytes) */
+    uint8_t bfh[14];
+    std::memset(bfh, 0, sizeof(bfh));
+    bfh[0] = 'B'; bfh[1] = 'M';
+    bfh[2] = (uint8_t)(file_size);       bfh[3] = (uint8_t)(file_size >> 8);
+    bfh[4] = (uint8_t)(file_size >> 16);  bfh[5] = (uint8_t)(file_size >> 24);
+    bfh[10] = (uint8_t)(pixel_offset);    bfh[11] = (uint8_t)(pixel_offset >> 8);
+    bfh[12] = (uint8_t)(pixel_offset >> 16); bfh[13] = (uint8_t)(pixel_offset >> 24);
+    f_write(&f, bfh, 14, &bw);
+
+    /* BITMAPINFOHEADER (40 bytes) */
+    uint8_t dib[40];
+    std::memset(dib, 0, sizeof(dib));
+    dib[0] = 40; /* header size */
+    dib[4]  = (uint8_t)(W);        dib[5]  = (uint8_t)(W >> 8);
+    dib[8]  = (uint8_t)(H);        dib[9]  = (uint8_t)(H >> 8);
+    dib[12] = 1;  /* planes */
+    dib[14] = 8;  /* bits per pixel */
+    /* compression = 0 (BI_RGB), image size can be 0 for uncompressed */
+    dib[32] = 0;  /* colors used = 0 (all 256) */
+    f_write(&f, dib, 40, &bw);
+
+    /* Palette: 256 entries × 4 bytes (BGRA) */
+    uint8_t pal[256 * 4];
+    std::memset(pal, 0, sizeof(pal));
+    /* First 32 entries from CPC hardware palette */
+    for (int i = 0; i < 32; i++) {
+        uint32_t rgb = cpc_rgb_table[i];
+        pal[i * 4 + 0] = (uint8_t)(rgb & 0xFF);         /* Blue */
+        pal[i * 4 + 1] = (uint8_t)((rgb >> 8) & 0xFF);  /* Green */
+        pal[i * 4 + 2] = (uint8_t)((rgb >> 16) & 0xFF); /* Red */
+    }
+    /* Index 255 = black (used for border blanking) */
+    pal[255 * 4 + 0] = 0; pal[255 * 4 + 1] = 0; pal[255 * 4 + 2] = 0;
+    f_write(&f, pal, palette_size, &bw);
+
+    /* Pixel data — bottom-to-top row order */
+    uint8_t row_pad[4] = {0, 0, 0, 0};
+    int pad = row_bytes - W;
+    for (int y = H - 1; y >= 0; y--) {
+        const uint8_t *src = scanline_render_target + y * scanline_render_stride;
+        f_write(&f, src, (UINT)W, &bw);
+        if (pad > 0)
+            f_write(&f, row_pad, (UINT)pad, &bw);
+    }
+
+    f_close(&f);
+    printf("cpc_adapter: screenshot saved to %s\n", path);
     return 0;
 }
 

@@ -24,6 +24,7 @@
 #include "crtc.h"
 #include "z80.h"
 #include "asic.h"
+#include "cpc_dandanator.h"
 
 extern t_z80regs z80;
 extern t_CPC CPC;
@@ -57,6 +58,7 @@ extern byte *pbSndBufferEnd;
 
 extern t_flags1 flags1;
 extern t_new_dt new_dt;
+extern int crtc_type;
 
 void SetAYRegister(int Num, byte Value);
 void ResetAYChipEmulation();
@@ -67,6 +69,8 @@ void fdc_write_data(byte val);
 void crtc_update_palette_cache();
 
 extern "C" unsigned char *cpc_cartridge_get_page(int page);
+extern "C" void cpc_mf2_page_in(void);
+extern "C" void cpc_mf2_page_out(void);
 
 t_MemBankConfig membank_config{};
 
@@ -225,6 +229,12 @@ void ga_memory_manager()
       membank_read[GateArray.lower_ROM_bank] = pbROMlo;
    }
 
+   if ((GateArray.ROM_config & 0x04) == 0) {
+      if (byte *dan_bank = reinterpret_cast<byte *>(dandanator_get_mapped_bank()); dan_bank != nullptr) {
+         membank_read[GateArray.lower_ROM_bank] = dan_bank;
+      }
+   }
+
    /* CPC Plus: map ASIC register page at 0x4000-0x7FFF */
    if (CPC.model > 2 && GateArray.registerPageOn && pbRegisterPage) {
       membank_read[1] = pbRegisterPage;
@@ -247,8 +257,36 @@ __attribute__((section(".time_critical.cap32"))) byte z80_IN_handler(reg_pair po
 
    if ((port.b.h & 0x40) == 0) {
       if ((port.b.h & 3) == 3) {
-         if ((CRTC.reg_select > 11) && (CRTC.reg_select < 18)) {
-            ret_val = CRTC.registers[CRTC.reg_select];
+         if (CRTC.reg_select < 18) {
+            switch (crtc_type) {
+               case 0:
+                  if (CRTC.reg_select >= 12) {
+                     ret_val = CRTC.registers[CRTC.reg_select];
+                  } else {
+                     ret_val = 0;
+                  }
+                  break;
+
+               case 1:
+                  if (CRTC.reg_select >= 12 && CRTC.reg_select <= 13) {
+                     ret_val = CRTC.registers[CRTC.reg_select];
+                  } else if (CRTC.reg_select >= 16) {
+                     ret_val = CRTC.registers[CRTC.reg_select];
+                  } else {
+                     ret_val = 0;
+                  }
+                  break;
+
+               case 2:
+               case 3:
+               case 4:
+                  ret_val = CRTC.registers[CRTC.reg_select];
+                  break;
+
+               default:
+                  ret_val = 0;
+                  break;
+            }
          }
          else {
             ret_val = 0;
@@ -338,6 +376,20 @@ __attribute__((section(".time_critical.cap32"))) byte z80_IN_handler(reg_pair po
 
 __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair port, byte val)
 {
+   if (CPC.mf2 & MF2_ACTIVE) {
+      if ((port.w.l & 0x04) == 0) {
+         if (port.b.l == 0xe8) {
+            cpc_mf2_page_in();
+            return;
+         }
+         if (port.b.l == 0xea) {
+            cpc_mf2_page_out();
+            CPC.mf2 |= MF2_INVISIBLE;
+            return;
+         }
+      }
+   }
+
    if ((port.b.h & 0xc0) == 0x40) {
       switch (val >> 6) {
          case 0:
@@ -427,8 +479,7 @@ __attribute__((section(".time_critical.cap32"))) void z80_OUT_handler(reg_pair p
 
                case 3:
                   CRTC.registers[3] = val;
-                  CRTC.hsw = val & 0x0f;
-                  CRTC.vsw = val >> 4;
+                  crtc_update_r3();
                   break;
 
                case 4:
@@ -683,6 +734,7 @@ void emulator_reset()
    video_set_palette();
    ga_memory_manager();
    asic_reset();
+   dandanator_reset();
 }
 
 int emulator_init()

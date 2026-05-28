@@ -9,9 +9,18 @@
 #include <stdint.h>
 #include "board_config.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Platform hook declarations */
 void cpc_init_palette(void);
 void cpc_ps2_feed_events(void);
 void cpc_autotype_tick(void);
 void cpc_frame_sync(void);
 void cpc_frame_present(void);
+void cpc_set_keyboard_layout(int layout);
+
+#ifdef __cplusplus
+}
+#endif

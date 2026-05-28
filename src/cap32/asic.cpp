@@ -8,6 +8,7 @@
 
 #include "asic.h"
 #include "crtc.h"
+#include "z80.h"
 #include <cstring>
 #include <cstdio>
 
@@ -17,6 +18,7 @@ extern t_GateArray GateArray;
 extern t_CRTC CRTC;
 extern t_CPC CPC;
 extern t_PSG PSG;
+extern t_z80regs z80;
 extern byte *membank_write[4];
 extern t_MemBankConfig membank_config;
 void SetAYRegister(int Num, byte Value);
@@ -228,6 +230,7 @@ void asic_reset() {
 
    asic.raster_interrupt = false;
    asic.interrupt_vector = 1;
+   asic.irq_cause = 0;
 
    for (auto &channel : asic.dma.ch) {
       channel.source_address = 0;
@@ -382,6 +385,15 @@ void asic_dma_cycle() {
 
    if (dcsr_changed && pbRegisterPage) {
       pbRegisterPage[0x6C0F - 0x4000] = dcsr;
+   }
+
+   for (int c = 0; c < NB_DMA_CHANNELS; c++) {
+      if (asic.dma.ch[c].interrupt) {
+         z80.int_pending = 1;
+         asic.irq_cause = 4 - c;  // ch0→4, ch1→3, ch2→2
+         asic.dma.ch[c].interrupt = false;
+         break;
+      }
    }
 }
 

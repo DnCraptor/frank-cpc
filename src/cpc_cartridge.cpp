@@ -13,6 +13,7 @@
 
 #include "cpc_cartridge.h"
 #include "cpc_adapter.h"
+#include "cpc_dandanator.h"
 
 #include "cap32/cap32.h"
 #include "cap32/disk.h"
@@ -93,8 +94,9 @@ int cpc_cartridge_insert(const char *path) {
         return -1;
     }
 
-    /* Eject any previous cartridge */
+    /* Eject any previous cartridge and conflicting Dandanator media */
     cpc_cartridge_eject();
+    dandanator_eject();
 
     /* Read and validate RIFF header (12 bytes) */
     f_read(&f, header, 12, &br);

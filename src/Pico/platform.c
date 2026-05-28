@@ -148,6 +148,7 @@ void cpc_frame_sync(void) {
 #define KS_F10         0xffc7
 #define KS_F11         0xffc8
 #define KS_F12         0xffc9
+#define KS_Scroll_Lock 0xff14
 #define KS_Shift_L     0xffe1
 #define KS_Shift_R     0xffe2
 #define KS_Ctrl_L      0xffe3
@@ -223,6 +224,7 @@ enum {
     PSC_F8           = 0x42,
     PSC_F9           = 0x43,
     PSC_F10          = 0x44,
+    PSC_ScrollLock   = 0x46,
     PSC_F11          = 0x57,
     PSC_F12          = 0x58,
     PSC_Up           = 0x5A,
@@ -288,6 +290,7 @@ static unsigned int scancode_to_keysym(unsigned int sc, bool shifted) {
         case PSC_F8:        return KS_F8;
         case PSC_F9:        return KS_F9;
         case PSC_F10:       return KS_F10;
+        case PSC_ScrollLock:return KS_Scroll_Lock;
         case PSC_F11:       return KS_F11;
         case PSC_F12:       return KS_F12;
         case PSC_LShift:    return KS_Shift_L;
@@ -375,6 +378,207 @@ static const uint8_t ps2_to_cpc_matrix[CPC_MATRIX_SIZE][2] = {
     [PSC_Left]      = {1, 0},
     [PSC_Right]     = {0, 1},
 };
+
+static const uint8_t ps2_to_cpc_matrix_fr[CPC_MATRIX_SIZE][2] = {
+    [0x00] = {_U, 0},  /* no scancode 0 */
+    [PSC_Escape]    = {8, 2},
+    [PSC_1] = {8, 0}, [PSC_2] = {8, 1}, [PSC_3] = {7, 1}, [PSC_4] = {7, 0},
+    [PSC_5] = {6, 1}, [PSC_6] = {6, 0}, [PSC_7] = {5, 1}, [PSC_8] = {5, 0},
+    [PSC_9] = {4, 1}, [PSC_0] = {4, 0},
+    [PSC_Minus]     = {3, 1},
+    [PSC_Equals]    = {3, 4},
+    [PSC_BackSpace] = {9, 7},
+    [PSC_Tab]       = {8, 4},
+    [PSC_Q] = {8, 5}, [PSC_W] = {8, 7}, [PSC_E] = {7, 2}, [PSC_R] = {6, 2},
+    [PSC_T] = {6, 3}, [PSC_Y] = {5, 3}, [PSC_U] = {5, 2}, [PSC_I] = {4, 3},
+    [PSC_O] = {4, 2}, [PSC_P] = {3, 3},
+    [PSC_LBr]       = {2, 1},
+    [PSC_RBr]       = {2, 3},
+    [PSC_Return]    = {2, 2},
+    [PSC_LCtrl]     = {2, 7},
+    [PSC_A] = {8, 3}, [PSC_S] = {7, 4}, [PSC_D] = {7, 5}, [PSC_F] = {6, 5},
+    [PSC_G] = {6, 4}, [PSC_H] = {5, 4}, [PSC_J] = {5, 5}, [PSC_K] = {4, 5},
+    [PSC_L] = {4, 4},
+    [PSC_Semicolon] = {4, 6},
+    [PSC_Quote]     = {3, 2},
+    [PSC_BackQuote] = {3, 0},
+    [PSC_LShift]    = {2, 5},
+    [PSC_BackSlash] = {2, 6},
+    [PSC_Z] = {7, 3}, [PSC_X] = {7, 7}, [PSC_C] = {7, 6}, [PSC_V] = {6, 7},
+    [PSC_B] = {6, 6}, [PSC_N] = {5, 6}, [PSC_M] = {4, 7},
+    [PSC_Comma]     = {4, 7},
+    [PSC_Period]    = {3, 7},
+    [PSC_Slash]     = {3, 6},
+    [PSC_RShift]    = {2, 5},
+    [0x37] = {_U, 0},
+    [PSC_LAlt]      = {1, 1},
+    [PSC_Space]     = {5, 7},
+    [PSC_CapsLock]  = {8, 6},
+    [PSC_F1] = {_U, 0}, [PSC_F2] = {_U, 0}, [PSC_F3] = {_U, 0},
+    [PSC_F4] = {_U, 0}, [PSC_F5] = {_U, 0}, [PSC_F6] = {_U, 0},
+    [PSC_F7] = {_U, 0}, [PSC_F8] = {_U, 0}, [PSC_F9] = {_U, 0},
+    [PSC_F10] = {_U, 0}, [PSC_F11] = {_U, 0}, [PSC_F12] = {_U, 0},
+    [0x45] = {_U, 0}, [0x46] = {_U, 0}, [0x47] = {_U, 0}, [0x48] = {_U, 0},
+    [0x49] = {_U, 0}, [0x4A] = {_U, 0}, [0x4B] = {_U, 0}, [0x4C] = {_U, 0},
+    [0x4D] = {_U, 0}, [0x4E] = {_U, 0}, [0x4F] = {_U, 0}, [0x50] = {_U, 0},
+    [0x51] = {_U, 0}, [0x52] = {_U, 0}, [0x53] = {_U, 0}, [0x54] = {_U, 0},
+    [0x55] = {_U, 0}, [0x56] = {_U, 0}, [0x59] = {_U, 0},
+    [PSC_Up]        = {0, 0},
+    [0x5B] = {_U, 0}, [0x5C] = {_U, 0}, [0x5D] = {_U, 0},
+    [PSC_Insert]    = {_U, 0},
+    [PSC_Delete]    = {2, 0},
+    [0x60] = {_U, 0},
+    [PSC_Home]      = {_U, 0},
+    [PSC_End]       = {_U, 0},
+    [PSC_PgUp]      = {_U, 0},
+    [PSC_PgDn]      = {_U, 0},
+    [PSC_RAlt]      = {1, 1},
+    [PSC_RCtrl]     = {2, 7},
+    [0x67] = {_U, 0},
+    [PSC_KP_Enter]  = {0, 6},
+    [0x69] = {_U, 0},
+    [PSC_Down]      = {0, 2},
+    [PSC_Left]      = {1, 0},
+    [PSC_Right]     = {0, 1},
+};
+
+static const uint8_t ps2_to_cpc_matrix_es[CPC_MATRIX_SIZE][2] = {
+    [0x00] = {_U, 0},  /* no scancode 0 */
+    [PSC_Escape]    = {8, 2},
+    [PSC_1] = {8, 0}, [PSC_2] = {8, 1}, [PSC_3] = {7, 1}, [PSC_4] = {7, 0},
+    [PSC_5] = {6, 1}, [PSC_6] = {6, 0}, [PSC_7] = {5, 1}, [PSC_8] = {5, 0},
+    [PSC_9] = {4, 1}, [PSC_0] = {4, 0},
+    [PSC_Minus]     = {3, 1},
+    [PSC_Equals]    = {3, 4},  /* = → CPC ;/+ key */
+    [PSC_BackSpace] = {9, 7},
+    [PSC_Tab]       = {8, 4},
+    [PSC_Q] = {8, 3}, [PSC_W] = {7, 3}, [PSC_E] = {7, 2}, [PSC_R] = {6, 2},
+    [PSC_T] = {6, 3}, [PSC_Y] = {5, 3}, [PSC_U] = {5, 2}, [PSC_I] = {4, 3},
+    [PSC_O] = {4, 2}, [PSC_P] = {3, 3},
+    [PSC_LBr]       = {2, 1},
+    [PSC_RBr]       = {2, 3},
+    [PSC_Return]    = {2, 2},
+    [PSC_LCtrl]     = {2, 7},
+    [PSC_A] = {8, 5}, [PSC_S] = {7, 4}, [PSC_D] = {7, 5}, [PSC_F] = {6, 5},
+    [PSC_G] = {6, 4}, [PSC_H] = {5, 4}, [PSC_J] = {5, 5}, [PSC_K] = {4, 5},
+    [PSC_L] = {4, 4},
+    [PSC_Semicolon] = {3, 5},
+    [PSC_Quote]     = {3, 2},
+    [PSC_BackQuote] = {3, 0},
+    [PSC_LShift]    = {2, 5},
+    [PSC_BackSlash] = {2, 6},
+    [PSC_Z] = {8, 7}, [PSC_X] = {7, 7}, [PSC_C] = {7, 6}, [PSC_V] = {6, 7},
+    [PSC_B] = {6, 6}, [PSC_N] = {5, 6}, [PSC_M] = {4, 6},
+    [PSC_Comma]     = {4, 7},
+    [PSC_Period]    = {3, 7},
+    [PSC_Slash]     = {3, 6},
+    [PSC_RShift]    = {2, 5},
+    [0x37] = {_U, 0},
+    [PSC_LAlt]      = {1, 1},
+    [PSC_Space]     = {5, 7},
+    [PSC_CapsLock]  = {8, 6},
+    [PSC_F1] = {_U, 0}, [PSC_F2] = {_U, 0}, [PSC_F3] = {_U, 0},
+    [PSC_F4] = {_U, 0}, [PSC_F5] = {_U, 0}, [PSC_F6] = {_U, 0},
+    [PSC_F7] = {_U, 0}, [PSC_F8] = {_U, 0}, [PSC_F9] = {_U, 0},
+    [PSC_F10] = {_U, 0}, [PSC_F11] = {_U, 0}, [PSC_F12] = {_U, 0},
+    [0x45] = {_U, 0}, [0x46] = {_U, 0}, [0x47] = {_U, 0}, [0x48] = {_U, 0},
+    [0x49] = {_U, 0}, [0x4A] = {_U, 0}, [0x4B] = {_U, 0}, [0x4C] = {_U, 0},
+    [0x4D] = {_U, 0}, [0x4E] = {_U, 0}, [0x4F] = {_U, 0}, [0x50] = {_U, 0},
+    [0x51] = {_U, 0}, [0x52] = {_U, 0}, [0x53] = {_U, 0}, [0x54] = {_U, 0},
+    [0x55] = {_U, 0}, [0x56] = {_U, 0}, [0x59] = {_U, 0},
+    [PSC_Up]        = {0, 0},
+    [0x5B] = {_U, 0}, [0x5C] = {_U, 0}, [0x5D] = {_U, 0},
+    [PSC_Insert]    = {_U, 0},
+    [PSC_Delete]    = {2, 0},
+    [0x60] = {_U, 0},
+    [PSC_Home]      = {_U, 0},
+    [PSC_End]       = {_U, 0},
+    [PSC_PgUp]      = {_U, 0},
+    [PSC_PgDn]      = {_U, 0},
+    [PSC_RAlt]      = {1, 1},
+    [PSC_RCtrl]     = {2, 7},
+    [0x67] = {_U, 0},
+    [PSC_KP_Enter]  = {0, 6},
+    [0x69] = {_U, 0},
+    [PSC_Down]      = {0, 2},
+    [PSC_Left]      = {1, 0},
+    [PSC_Right]     = {0, 1},
+};
+
+static const uint8_t ps2_to_cpc_matrix_de[CPC_MATRIX_SIZE][2] = {
+    [0x00] = {_U, 0},  /* no scancode 0 */
+    [PSC_Escape]    = {8, 2},
+    [PSC_1] = {8, 0}, [PSC_2] = {8, 1}, [PSC_3] = {7, 1}, [PSC_4] = {7, 0},
+    [PSC_5] = {6, 1}, [PSC_6] = {6, 0}, [PSC_7] = {5, 1}, [PSC_8] = {5, 0},
+    [PSC_9] = {4, 1}, [PSC_0] = {4, 0},
+    [PSC_Minus]     = {3, 1},
+    [PSC_Equals]    = {3, 4},  /* = → CPC ;/+ key */
+    [PSC_BackSpace] = {9, 7},
+    [PSC_Tab]       = {8, 4},
+    [PSC_Q] = {8, 3}, [PSC_W] = {7, 3}, [PSC_E] = {7, 2}, [PSC_R] = {6, 2},
+    [PSC_T] = {6, 3}, [PSC_Y] = {8, 7}, [PSC_U] = {5, 2}, [PSC_I] = {4, 3},
+    [PSC_O] = {4, 2}, [PSC_P] = {3, 3},
+    [PSC_LBr]       = {2, 1},
+    [PSC_RBr]       = {2, 3},
+    [PSC_Return]    = {2, 2},
+    [PSC_LCtrl]     = {2, 7},
+    [PSC_A] = {8, 5}, [PSC_S] = {7, 4}, [PSC_D] = {7, 5}, [PSC_F] = {6, 5},
+    [PSC_G] = {6, 4}, [PSC_H] = {5, 4}, [PSC_J] = {5, 5}, [PSC_K] = {4, 5},
+    [PSC_L] = {4, 4},
+    [PSC_Semicolon] = {3, 5},
+    [PSC_Quote]     = {3, 2},
+    [PSC_BackQuote] = {3, 0},
+    [PSC_LShift]    = {2, 5},
+    [PSC_BackSlash] = {2, 6},
+    [PSC_Z] = {5, 3}, [PSC_X] = {7, 7}, [PSC_C] = {7, 6}, [PSC_V] = {6, 7},
+    [PSC_B] = {6, 6}, [PSC_N] = {5, 6}, [PSC_M] = {4, 6},
+    [PSC_Comma]     = {4, 7},
+    [PSC_Period]    = {3, 7},
+    [PSC_Slash]     = {3, 6},
+    [PSC_RShift]    = {2, 5},
+    [0x37] = {_U, 0},
+    [PSC_LAlt]      = {1, 1},
+    [PSC_Space]     = {5, 7},
+    [PSC_CapsLock]  = {8, 6},
+    [PSC_F1] = {_U, 0}, [PSC_F2] = {_U, 0}, [PSC_F3] = {_U, 0},
+    [PSC_F4] = {_U, 0}, [PSC_F5] = {_U, 0}, [PSC_F6] = {_U, 0},
+    [PSC_F7] = {_U, 0}, [PSC_F8] = {_U, 0}, [PSC_F9] = {_U, 0},
+    [PSC_F10] = {_U, 0}, [PSC_F11] = {_U, 0}, [PSC_F12] = {_U, 0},
+    [0x45] = {_U, 0}, [0x46] = {_U, 0}, [0x47] = {_U, 0}, [0x48] = {_U, 0},
+    [0x49] = {_U, 0}, [0x4A] = {_U, 0}, [0x4B] = {_U, 0}, [0x4C] = {_U, 0},
+    [0x4D] = {_U, 0}, [0x4E] = {_U, 0}, [0x4F] = {_U, 0}, [0x50] = {_U, 0},
+    [0x51] = {_U, 0}, [0x52] = {_U, 0}, [0x53] = {_U, 0}, [0x54] = {_U, 0},
+    [0x55] = {_U, 0}, [0x56] = {_U, 0}, [0x59] = {_U, 0},
+    [PSC_Up]        = {0, 0},
+    [0x5B] = {_U, 0}, [0x5C] = {_U, 0}, [0x5D] = {_U, 0},
+    [PSC_Insert]    = {_U, 0},
+    [PSC_Delete]    = {2, 0},
+    [0x60] = {_U, 0},
+    [PSC_Home]      = {_U, 0},
+    [PSC_End]       = {_U, 0},
+    [PSC_PgUp]      = {_U, 0},
+    [PSC_PgDn]      = {_U, 0},
+    [PSC_RAlt]      = {1, 1},
+    [PSC_RCtrl]     = {2, 7},
+    [0x67] = {_U, 0},
+    [PSC_KP_Enter]  = {0, 6},
+    [0x69] = {_U, 0},
+    [PSC_Down]      = {0, 2},
+    [PSC_Left]      = {1, 0},
+    [PSC_Right]     = {0, 1},
+};
+
+static const uint8_t (*active_ps2_matrix)[2] = ps2_to_cpc_matrix;
+
+void cpc_set_keyboard_layout(int layout) {
+    switch (layout) {
+        case 1: active_ps2_matrix = ps2_to_cpc_matrix_fr; break;
+        case 2: active_ps2_matrix = ps2_to_cpc_matrix_es; break;
+        case 3: active_ps2_matrix = ps2_to_cpc_matrix_de; break;
+        default: active_ps2_matrix = ps2_to_cpc_matrix; break;
+    }
+}
+
 #undef _U
 
 /* Shared key-event handler for both PS/2 and USB HID keyboards. */
@@ -400,6 +604,11 @@ static void handle_key_event(int pressed, unsigned char key) {
         if (ks == KS_Delete && s_ctrl_held && s_alt_held) {
             extern void cpc_settings_do_reset(void);
             cpc_settings_do_reset();
+            return;
+        }
+        /* Scroll Lock: Multiface II STOP */
+        if (ks == KS_Scroll_Lock) {
+            cpc_mf2_stop();
             return;
         }
         /* F11: disk browser menu */
@@ -430,8 +639,8 @@ static void handle_key_event(int pressed, unsigned char key) {
      * Each PS/2 scancode maps to a fixed (row, bit) in the CPC's
      * 10×8 keyboard matrix. Press clears the bit, release sets it. */
     if (key < CPC_MATRIX_SIZE) {
-        uint8_t row = ps2_to_cpc_matrix[key][0];
-        uint8_t bit = ps2_to_cpc_matrix[key][1];
+        uint8_t row = active_ps2_matrix[key][0];
+        uint8_t bit = active_ps2_matrix[key][1];
         if (row < 10) {
             if (pressed)
                 km[row] &= ~(1u << bit);

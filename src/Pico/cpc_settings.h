@@ -7,7 +7,7 @@
  * Persisted to /cpc/cpc.ini on the SD card.
  * Model/Memory/Customer/Speed/Sound/Stereo/ROM changes require a full CPC
  * reset (InitMem + ResetZ80).
- * Monitor, Limit Speed, and Volume take effect immediately.
+ * Monitor, Keyboard, Limit Speed, and Volume take effect immediately.
  */
 #ifndef CPC_SETTINGS_H
 #define CPC_SETTINGS_H
@@ -34,10 +34,12 @@ typedef enum {
 } cpc_audio_driver_t;
 
 typedef enum {
-    CPC_SETTING_MODEL = 0,  /* CPC 464 / 664 / 6128          (needs reset) */
-    CPC_SETTING_MEMORY,     /* 64K / 128K / 576K              (needs reset) */
-    CPC_SETTING_MONITOR,    /* Color / Green                  (live)        */
-    CPC_SETTING_CUSTOMER,   /* Amstrad / Schneider / ...      (needs reset) */
+    CPC_SETTING_MODEL = 0,  /* CPC 464 / 664 / 6128              (needs reset) */
+    CPC_SETTING_MEMORY,     /* 64K / 128K / 576K                  (needs reset) */
+    CPC_SETTING_MONITOR,    /* Color / Green                      (live)        */
+    CPC_SETTING_CRTC_TYPE,  /* CRTC 0 / 1 / 2 / 3 / 4             (needs reset) */
+    CPC_SETTING_KEYBOARD,   /* English / French / Spanish / German (live)      */
+    CPC_SETTING_CUSTOMER,   /* Amstrad / Schneider / ...          (needs reset) */
     CPC_SETTING_SPEED,      /* 50%–400% emulation speed       (needs reset) */
     CPC_SETTING_LIMIT_SPEED,/* On / Off — cap to set speed    (live)        */
     CPC_SETTING_SND_ENABLED,/* On / Off — master sound toggle (needs reset) */
@@ -54,6 +56,8 @@ typedef struct {
     uint8_t model;    /* 0=CPC464, 1=CPC664, 2=CPC6128 */
     uint8_t memory;   /* 0=64K, 1=128K, 2=576K         */
     uint8_t monitor;  /* 0=Color, 1=Green               */
+    uint8_t crtc_type; /* 0..4 CRTC type                 */
+    uint8_t kbd_layout; /* 0=English, 1=French, 2=Spanish, 3=German */
     uint8_t customer; /* 0..7 index (Amstrad..Orion)    */
     uint8_t rom_idx;  /* index into g_cpc_rom_list      */
     char    autorun[64]; /* command to auto-type on boot, e.g. RUN"PRINCE */
@@ -94,7 +98,7 @@ bool cpc_settings_needs_reset(cpc_setting_id_t id);
  * sound, stereo).  Call before InitMem() / ResetZ80(). */
 void cpc_settings_apply(void);
 
-/* Apply only the live (no-reset) settings — currently just the monitor. */
+/* Apply only the live visual settings. */
 void cpc_settings_apply_visual(void);
 
 /* Scan /cpc/rom/ for *.rom files and populate g_cpc_rom_list.

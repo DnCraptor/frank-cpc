@@ -62,11 +62,19 @@ const char *cpc_cartridge_filename(void);
 int cpc_snapshot_save(const char *path);
 int cpc_snapshot_load(const char *path);
 
+/* Screenshot: save current framebuffer as BMP to /cpc/screenshot/. */
+int cpc_screenshot_save(void);
+
+/* Multiface II support. */
+void cpc_mf2_stop(void);
+int cpc_mf2_available(void);
+
 /* Settings — call before cpc_engine_init() or before cpc_engine_reset(). */
 void cpc_set_model(int model);       /* 0=464, 1=664, 2=6128, 3=6128+ */
 void cpc_set_ram_size(int kb);       /* 64, 128, or 576 */
 void cpc_set_rom(int slot, const char *path);
 void cpc_set_jumpers(unsigned int jumpers); /* PPI port B jumper config */
+void cpc_set_crtc_type(int type);
 void cpc_set_speed(unsigned int speed);     /* 1..32 (×25 = percent) */
 void cpc_set_limit_speed(int enabled);      /* 0=unlimited, 1=cap to speed */
 void cpc_set_snd_enabled(int enabled);      /* 0=off, 1=on */

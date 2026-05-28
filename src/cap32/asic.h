@@ -50,6 +50,7 @@ struct asic_t {
 
    bool raster_interrupt;
    byte interrupt_vector;
+   byte irq_cause;  // 0=none, 1=raster(PRI), 2=DMA0, 3=DMA1, 4=DMA2
 
    dma_t dma;
 };

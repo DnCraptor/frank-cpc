@@ -338,9 +338,11 @@ set(CAP32_ENGINE
     src/cap32/fdc.cpp
     src/cap32/disk.cpp
     src/cap32/tape.cpp
+    src/cap32/tape_fastload.cpp
     src/cap32/asic.cpp
     src/cpc_adapter.cpp
     src/cpc_cartridge.cpp
+    src/cpc_dandanator.cpp
     src/cpc_ipf.cpp
     src/cpc_ipf_io.c
 )
@@ -475,6 +477,7 @@ set_source_files_properties(
     src/cap32/crtc.cpp
     src/cap32/psg.cpp
     src/cap32/cap32.cpp
+    src/cap32/tape_fastload.cpp
     src/cpc_adapter.cpp
     PROPERTIES COMPILE_FLAGS "-O3"
 )

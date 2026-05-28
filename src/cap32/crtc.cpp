@@ -37,6 +37,7 @@ extern t_VDU VDU;
 extern t_z80regs z80;
 extern byte *pbRAM;
 extern dword dwXScale;
+int crtc_type = 0;
 
 #ifdef DEBUG_CRTC
 extern dword dwDebugFlag;
@@ -105,6 +106,22 @@ static inline void recompute_next_event() {
 }
 
 void crtc_recompute_next_event() { recompute_next_event(); }
+
+void crtc_update_r3()
+{
+   CRTC.hsw = CRTC.registers[3] & 0x0f;
+   if (crtc_type == 2 && CRTC.hsw == 0) {
+      CRTC.hsw = 16;
+   }
+
+   CRTC.vsw = (CRTC.registers[3] >> 4) & 0x0f;
+   if (CRTC.vsw == 0) {
+      CRTC.vsw = 16;
+   }
+   if (crtc_type == 1 || crtc_type == 2) {
+      CRTC.vsw = 16;
+   }
+}
 
 /* MAXlate removed — computed inline in crtc_cycle() */
 
@@ -568,7 +585,11 @@ inline void end_vdu_hsync()
 
 inline void match_line_count()
 {
-   if (CRTC.line_count == CRTC.registers[6]) { // matches vertical displayed?
+   byte vertical_displayed = CRTC.registers[6];
+   if (crtc_type == 0 && vertical_displayed == 0) {
+      vertical_displayed = 1;
+   }
+   if (CRTC.line_count == vertical_displayed) { // matches vertical displayed?
       new_dt.NewDISPTIMG = 0; // disable vertical DISPTMG
    }
    if (CRTC.line_count == CRTC.registers[7]) { // matches vertical sync position?
@@ -626,16 +647,19 @@ inline void match_hsw()
       if (GateArray.sl_count == 52) { // trigger interrupt?
          if (CRTC.interrupt_sl == 0) {
             z80.int_pending = 1; // queue Z80 interrupt
+            if (CPC.model > 2) asic.irq_cause = 1;
          }
          GateArray.sl_count = 0; // clear counter
       } else if (CRTC.sl_count == CRTC.interrupt_sl && CRTC.interrupt_sl != 0) {
          z80.int_pending = 1;
+         if (CPC.model > 2) asic.irq_cause = 1;
       }
       if (GateArray.hs_count) { // delaying on VSYNC?
          GateArray.hs_count--;
          if (!GateArray.hs_count) {
             if (GateArray.sl_count >= 32 && CRTC.interrupt_sl == 0) { // counter above save margin?
                z80.int_pending = 1; // queue interrupt
+               if (CPC.model > 2) asic.irq_cause = 0;
             }
             GateArray.sl_count = 0; // clear counter
          }
@@ -650,7 +674,9 @@ inline void match_hsw()
       }
    } else {
       CRTC.hsw_count++; // update counter
-      CRTC.hsw_count &= 15; // limit to 4 bits
+      if (!(crtc_type == 2 && CRTC.hsw == 16)) {
+         CRTC.hsw_count &= 15; // limit to 4 bits
+      }
       if (CRTC.hsw_count == 3) { // ready to start monitor HSYNC?
          CRTC.flag_inmonhsync = 1; // enter monitor HSYNC
          iMonHSStartPos = 0;
@@ -1155,7 +1181,6 @@ void __attribute__((hot, section(".time_critical.crtc"))) crtc_cycle(int repeat_
 
          if (CRTC.flag_invsync) { // VSYNC active?
             CRTC.vsw_count++; // update counter
-            CRTC.vsw_count &= 15; // limit to 4 bits
             if (CRTC.vsw_count == CRTC.vsw) { // matches vertical sync width?
                CRTC.vsw_count = 0; // reset counter
                CRTC.flag_resvsync = 1; // request VSYNC reset
@@ -1276,6 +1301,7 @@ void crtc_reset()
    CRTC.registers[0] = 0x3f;
    CRTC.registers[2] = 0x2e;
    CRTC.registers[3] = 0x8e;
+   crtc_update_r3();
 
    RendPos = reinterpret_cast<dword *>(&RendBuff[0]);
    RendOut = reinterpret_cast<byte *>(RendStart);

@@ -29,7 +29,7 @@ extern char              g_cpc_disk_dir[CPC_DISK_PATH_LEN];
 typedef enum {
     CPC_FILTER_DISK = 0,  /* show .dsk/.ipf files only */
     CPC_FILTER_TAPE,      /* show .cdt/.cas files only */
-    CPC_FILTER_CARTRIDGE, /* show .cpr files only */
+    CPC_FILTER_CARTRIDGE, /* show .cpr/.dan files only */
 } cpc_filter_t;
 
 /* Set the file type filter for subsequent cpc_disk_rescan() calls. */
@@ -65,6 +65,9 @@ int cpc_is_tape_file(const char *name);
 
 /* Returns true if the filename has a cartridge extension (.cpr). */
 int cpc_is_cpr_file(const char *name);
+
+/* Returns true if the filename has a Dandanator extension (.dan). */
+int cpc_is_dan_file(const char *name);
 
 /* Returns true if the filename has an IPF extension (.ipf). */
 int cpc_is_ipf_file(const char *name);

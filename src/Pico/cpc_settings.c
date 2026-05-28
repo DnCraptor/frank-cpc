@@ -9,6 +9,7 @@
 #include "tape.h"
 #include "ff.h"
 #include "cpc_adapter.h"
+#include "cpc_compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,6 +65,8 @@ cpc_settings_t g_cpc_settings = {
     .model    = 2,  /* CPC 6128 */
     .memory   = 1,  /* 128 KB   */
     .monitor  = 0,  /* Color    */
+    .crtc_type = 0, /* CRTC 0   */
+    .kbd_layout = 0, /* English */
     .customer = 0,  /* Amstrad  */
     .rom_idx  = 0,  /* Auto     */
     .speed    = 2,  /* 100% (index into SPEED_PRESETS) */
@@ -84,6 +87,8 @@ bool g_cpc_settings_dirty = false;
 static const char *MODEL_LABELS[]    = { "CPC 464", "CPC 664", "CPC 6128" };
 static const char *MEMORY_LABELS[]   = { "64 KB", "128 KB", "576 KB" };
 static const char *MONITOR_LABELS[]  = { "Color", "Green" };
+static const char *KBD_LABELS[]      = { "English", "French", "Spanish", "German" };
+static const char *CRTC_LABELS[]     = { "CRTC 0", "CRTC 1", "CRTC 2", "CRTC 3", "CRTC 4" };
 static const char *FAST_TAPE_LABELS[] = { "Off", "On" };
 static const char *STEREO_LABELS[] = { "Mono", "Stereo" };
 static const char *ONOFF_LABELS[] = { "Off", "On" };
@@ -126,6 +131,8 @@ int cpc_settings_choices(cpc_setting_id_t id) {
         case CPC_SETTING_MODEL:    return 3;
         case CPC_SETTING_MEMORY:   return 3;
         case CPC_SETTING_MONITOR:  return 2;
+        case CPC_SETTING_CRTC_TYPE: return 5;
+        case CPC_SETTING_KEYBOARD: return 4;
         case CPC_SETTING_CUSTOMER: return 8;
         case CPC_SETTING_SPEED:    return SPEED_PRESET_COUNT;
         case CPC_SETTING_LIMIT_SPEED: return 2;
@@ -145,6 +152,8 @@ const char *cpc_settings_label(cpc_setting_id_t id) {
         case CPC_SETTING_MODEL:    return "Model";
         case CPC_SETTING_MEMORY:   return "Memory";
         case CPC_SETTING_MONITOR:  return "Monitor";
+        case CPC_SETTING_CRTC_TYPE: return "CRTC Type";
+        case CPC_SETTING_KEYBOARD: return "Keyboard";
         case CPC_SETTING_CUSTOMER: return "Customer";
         case CPC_SETTING_SPEED:    return "Speed";
         case CPC_SETTING_LIMIT_SPEED: return "Limit Speed";
@@ -164,6 +173,12 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
         case CPC_SETTING_MODEL:    return MODEL_LABELS[g_cpc_settings.model];
         case CPC_SETTING_MEMORY:   return MEMORY_LABELS[g_cpc_settings.memory];
         case CPC_SETTING_MONITOR:  return MONITOR_LABELS[g_cpc_settings.monitor];
+        case CPC_SETTING_CRTC_TYPE: {
+            uint8_t idx = g_cpc_settings.crtc_type;
+            if (idx >= 5) idx = 0;
+            return CRTC_LABELS[idx];
+        }
+        case CPC_SETTING_KEYBOARD: return KBD_LABELS[g_cpc_settings.kbd_layout & 3];
         case CPC_SETTING_CUSTOMER: return CUSTOMER_LABELS[g_cpc_settings.customer];
         case CPC_SETTING_SPEED: {
             uint8_t idx = g_cpc_settings.speed;
@@ -196,6 +211,7 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
 bool cpc_settings_needs_reset(cpc_setting_id_t id) {
     switch (id) {
         case CPC_SETTING_MONITOR:
+        case CPC_SETTING_KEYBOARD:
         case CPC_SETTING_AUDIO_IN:
         case CPC_SETTING_FAST_TAPE:
         case CPC_SETTING_AUDIO_DRV:
@@ -226,6 +242,11 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
         case CPC_SETTING_MONITOR:
             step_u8(&g_cpc_settings.monitor, delta, n);
             cpc_settings_apply_visual();
+            break;
+        case CPC_SETTING_CRTC_TYPE: step_u8(&g_cpc_settings.crtc_type, delta, n); break;
+        case CPC_SETTING_KEYBOARD:
+            step_u8(&g_cpc_settings.kbd_layout, delta, n);
+            cpc_set_keyboard_layout(g_cpc_settings.kbd_layout);
             break;
         case CPC_SETTING_CUSTOMER: step_u8(&g_cpc_settings.customer, delta, n); break;
         case CPC_SETTING_SPEED:    step_u8(&g_cpc_settings.speed,    delta, n); break;
@@ -295,6 +316,12 @@ void cpc_settings_apply(void) {
     /* Monitor */
     cpc_settings_apply_visual();
 
+    /* Keyboard */
+    cpc_set_keyboard_layout(g_cpc_settings.kbd_layout);
+
+    /* CRTC type */
+    cpc_set_crtc_type(g_cpc_settings.crtc_type);
+
     /* Customer → jumpers */
     uint8_t cust = g_cpc_settings.customer;
     if (cust > 7) cust = 0;
@@ -348,6 +375,8 @@ static const ini_field_t INI_FIELDS[] = {
     { "model",    &g_cpc_settings.model,    3 },
     { "memory",   &g_cpc_settings.memory,   3 },
     { "monitor",  &g_cpc_settings.monitor,  2 },
+    { "crtc_type", &g_cpc_settings.crtc_type, 5 },
+    { "kbd_layout", &g_cpc_settings.kbd_layout, 4 },
     { "customer", &g_cpc_settings.customer, 8 },
     { "fast_tape", &g_cpc_settings.fast_tape, 2 },
     { "stereo",    &g_cpc_settings.stereo,    2 },

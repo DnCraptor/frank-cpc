@@ -14,6 +14,7 @@
 #include "cpc_tape_loader.h"
 #include "cpc_adapter.h"
 #include "cpc_cartridge.h"
+#include "cpc_dandanator.h"
 #include "tape_rec.h"
 #include "ui_draw.h"
 #include "board_config.h"
@@ -46,10 +47,11 @@ int CreateBlankDsk(const char *path);
 /* Settings rows */
 #define SETTINGS_SAVE_SNA_ROW  CPC_SETTING_COUNT
 #define SETTINGS_LOAD_SNA_ROW  (CPC_SETTING_COUNT + 1)
-#define SETTINGS_TAPE_REC_ROW  (CPC_SETTING_COUNT + 2)
-#define SETTINGS_APPLY_ROW  (CPC_SETTING_COUNT + 3)
-#define SETTINGS_BACK_ROW   (CPC_SETTING_COUNT + 4)
-#define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 5)
+#define SETTINGS_SCREENSHOT_ROW (CPC_SETTING_COUNT + 2)
+#define SETTINGS_TAPE_REC_ROW  (CPC_SETTING_COUNT + 3)
+#define SETTINGS_APPLY_ROW  (CPC_SETTING_COUNT + 4)
+#define SETTINGS_BACK_ROW   (CPC_SETTING_COUNT + 5)
+#define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 6)
 #define SETTINGS_VISIBLE_ROWS 14
 
 /* Disk browser rows are dynamic depending on whether a disk is mounted:
@@ -86,13 +88,27 @@ static char       s_toast[64]        = "";
 static int        s_toast_frames     = 0;   /* frames remaining */
 
 /* Dynamic row helpers (depend on s_disk_drive, so defined after state vars) */
+static bool cartridge_has_media(void) {
+    return cpc_cartridge_is_loaded() != 0 || dandanator_is_inserted() != 0;
+}
+
+static const char *mounted_cartridge_name(void) {
+    const char *name = cpc_cartridge_filename();
+    return name ? name : (dandanator_is_inserted() ? "Dandanator" : NULL);
+}
+
+static void eject_cartridge_media(void) {
+    dandanator_eject();
+    cpc_cartridge_eject();
+}
+
 static bool disk_has_eject(void) {
     if (s_disk_drive < 2)
         return cpc_mounted_disk_name(s_disk_drive) != NULL;
     else if (s_disk_drive == 2)
         return cpc_mounted_tape_name() != NULL;
     else
-        return cpc_cartridge_is_loaded() != 0;
+        return cartridge_has_media();
 }
 static int disk_dotdot_row(void)   { return disk_has_eject() ? 1 : 0; }
 static int disk_entry_offset(void) { return disk_has_eject() ? 2 : 1; }
@@ -194,6 +210,9 @@ static bool handle_settings_page(unsigned int ks) {
             } else if (s_setting_row == SETTINGS_LOAD_SNA_ROW) {
                 cpc_snapshot_load("/cpc/snapshot.sna");
                 s_state = UI_HIDDEN;
+            } else if (s_setting_row == SETTINGS_SCREENSHOT_ROW) {
+                s_state = UI_HIDDEN;
+                cpc_screenshot_save();
             } else if (s_setting_row == SETTINGS_TAPE_REC_ROW) {
                 if (tape_rec_active()) {
                     tape_rec_stop("/cpc/tape_out.cdt");
@@ -261,8 +280,8 @@ static bool handle_disk_menu_key(unsigned int ks) {
                 }
             } else if (s_menu_row == 3) {
                 /* Cartridge: if loaded, eject; else open browser */
-                if (cpc_cartridge_is_loaded()) {
-                    cpc_cartridge_eject();
+                if (cartridge_has_media()) {
+                    eject_cartridge_media();
                 } else {
                     open_browser_for(3); /* 3 = cartridge mode */
                 }
@@ -335,7 +354,7 @@ static bool handle_disk_browser_key(unsigned int ks) {
                     cpc_eject_tape();
                     snprintf(s_disk_msg, sizeof(s_disk_msg), "Tape ejected");
                 } else {
-                    cpc_cartridge_eject();
+                    eject_cartridge_media();
                     snprintf(s_disk_msg, sizeof(s_disk_msg), "Cartridge ejected");
                 }
                 s_state = UI_DISK_MENU;
@@ -369,6 +388,15 @@ static bool handle_disk_browser_key(unsigned int ks) {
                             s_state = UI_HIDDEN;
                         } else {
                             snprintf(s_disk_msg, sizeof(s_disk_msg), "Failed to load tape");
+                        }
+                    } else if (cpc_is_dan_file(g_cpc_disk_entries[ei].name)) {
+                        /* Dandanator file → load as cartridge */
+                        if (dandanator_insert(path) == 0) {
+                            snprintf(s_toast, sizeof(s_toast), "Dandanator loaded");
+                            s_toast_frames = 100;
+                            s_state = UI_HIDDEN;
+                        } else {
+                            snprintf(s_disk_msg, sizeof(s_disk_msg), "Failed to load Dandanator");
                         }
                     } else if (cpc_is_cpr_file(g_cpc_disk_entries[ei].name)) {
                         /* CPR file → load as cartridge */
@@ -467,6 +495,10 @@ static void render_settings_page(uint8_t *fb, int stride) {
         } else if (i == SETTINGS_LOAD_SNA_ROW) {
             ui_draw_menu_item(fb, stride, x, y, cw,
                               "Load Snapshot",
+                              (cw - 4) / UI_CHAR_W, sel);
+        } else if (i == SETTINGS_SCREENSHOT_ROW) {
+            ui_draw_menu_item(fb, stride, x, y, cw,
+                              "Screenshot to SD",
                               (cw - 4) / UI_CHAR_W, sel);
         } else if (i == SETTINGS_TAPE_REC_ROW) {
             ui_draw_menu_item(fb, stride, x, y, cw,
@@ -590,7 +622,7 @@ static void render_disk_menu(uint8_t *fb, int stride) {
             /* Cartridge */
             ui_draw_string(fb, stride, x + 4, y + 2, "Cartridge:", fg);
 
-            const char *cname = cpc_cartridge_filename();
+            const char *cname = mounted_cartridge_name();
             if (cname) {
                 int len = (int)strlen(cname);
                 char buf[CPC_DISK_FILENAME_LEN + 4];
@@ -661,7 +693,7 @@ static void render_disk_browser(uint8_t *fb, int stride) {
         if (disk_has_eject() && i == 0) {
             const char *mounted = (s_disk_drive < 2)
                 ? cpc_mounted_disk_name(s_disk_drive)
-                : cpc_mounted_tape_name();
+                : (s_disk_drive == 2 ? cpc_mounted_tape_name() : mounted_cartridge_name());
             char item[CPC_DISK_FILENAME_LEN + 16];
             snprintf(item, sizeof(item), "[Eject: %s]", mounted);
             int len = (int)strlen(item);
