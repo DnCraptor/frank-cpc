@@ -1,7 +1,8 @@
 /*
- * frank-cpc — CPC emulator for RP2350
+ * frank-cpc — Amstrad CPC for RP2350
  *
  * Copyright (c) 2026 Mikhail Matveev <xtreme@rh1.tech>
+ * https://github.com/rh1tech/frank-cpc
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -32,6 +33,7 @@
 #include "ff.h"
 #include "ps2kbd_wrapper.h"
 #include "ps2.h"
+#include "usbhid_wrapper.h"
 
 #if defined(HDMI_PIO_AUDIO)
 #include "frank_hdmi.h"
@@ -373,12 +375,17 @@ int main(void) {
 
     stdio_init_all();
 
+#ifndef USB_HID_ENABLED
+    /* Wait for USB CDC serial to enumerate so early printf output is
+     * visible.  Skipped when USB HID is enabled because the native USB
+     * port is in host mode and there's no CDC device to wait for. */
     for (int i = 0; i < 10; ++i) sleep_ms(500);
+#endif
 
     crash_handler_check_and_print();
 
     printf("\n========================================\n");
-    printf("  frank-cpc — CPC emulator for RP2350\n");
+    printf("  frank-cpc — Amstrad CPC for RP2350\n");
     printf("  version %s  board M2\n", FRANK_CPC_VERSION);
     printf("  cpu=%lu MHz\n", clock_get_hz(clk_sys) / 1000000u);
     printf("========================================\n");
@@ -439,6 +446,13 @@ int main(void) {
     printf("Initializing PS/2 keyboard...\n");
     ps2kbd_init();
     printf("PS/2 keyboard initialized\n");
+
+    /* USB HID host (keyboard/gamepad/XInput). Stubs out to nothing when
+     * USB_HID_ENABLED is off — the native USB port is then owned by
+     * pico_stdio_usb for CDC printf instead. */
+    printf("Initializing USB HID host...\n");
+    usbhid_wrapper_init();
+    printf("USB HID host initialized\n");
 
 #if defined(VGA_HSTX)
     /* VGA_HSTX: DispHSTX already claimed Core 1. I2S audio on Core 0. */

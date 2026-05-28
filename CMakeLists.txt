@@ -1,7 +1,8 @@
 #
-# frank-cpc — CPC emulator for RP2350
+# frank-cpc — Amstrad CPC for RP2350
 #
 # Copyright (c) 2026 Mikhail Matveev <xtreme@rh1.tech>
+# https://github.com/rh1tech/frank-cpc
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
@@ -93,7 +94,10 @@ if(HDMI_DRIVER STREQUAL "COMPOSITE" AND CPU_SPEED LESS 300)
     set(CPU_VOLTAGE "VREG_VOLTAGE_1_60")
 endif()
 
-message(STATUS "frank-cpc  Platform: ${PLATFORM}  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}  HDMI: ${HDMI_DRIVER}")
+# Optional USB HID host (disabled by default since we focus on PS/2)
+option(USB_HID_ENABLED "Enable USB HID host (keyboard + gamepad)" OFF)
+
+message(STATUS "frank-cpc  Platform: ${PLATFORM}  CPU: ${CPU_SPEED} MHz  PSRAM: ${PSRAM_SPEED} MHz  Flash: ${FLASH_SPEED} MHz  Voltage: ${CPU_VOLTAGE}  HDMI: ${HDMI_DRIVER}  USB_HID: ${USB_HID_ENABLED}")
 
 include(pico_sdk_import.cmake)
 
@@ -111,6 +115,7 @@ add_subdirectory(drivers/fatfs)
 add_subdirectory(drivers/sdcard)
 add_subdirectory(drivers/ps2)
 add_subdirectory(drivers/nespad)
+add_subdirectory(drivers/usbhid)
 
 # Propagate platform define to sub-library targets that include board_config.h
 target_compile_definitions(ps2_driver PRIVATE ${PLATFORM_DEF}=1)
@@ -440,6 +445,10 @@ elseif(HDMI_DRIVER STREQUAL "COMPOSITE")
     target_link_libraries(frank-cpc tv_driver)
 endif()
 
+if(USB_HID_ENABLED)
+    target_include_directories(frank-cpc PRIVATE drivers/usbhid)
+endif()
+
 # Z0: SD card pins are above GPIO 28 — requires SPI1 instead of SPI0
 if(PLATFORM STREQUAL "z0")
     target_compile_definitions(frank-cpc PRIVATE SDCARD_SPI_BUS=spi1)
@@ -493,7 +502,17 @@ target_link_libraries(frank-cpc
     nespad
 )
 
+if(USB_HID_ENABLED)
+    target_link_libraries(frank-cpc usbhid)
+endif()
+
+# Dev builds (USB_HID off) use USB CDC stdio for printf; release (USB_HID on)
+# disables it because USB HID needs exclusive use of the controller.
 pico_enable_stdio_uart(frank-cpc 0)
-pico_enable_stdio_usb(frank-cpc 1)
+if(USB_HID_ENABLED)
+    pico_enable_stdio_usb(frank-cpc 0)
+else()
+    pico_enable_stdio_usb(frank-cpc 1)
+endif()
 
 pico_add_extra_outputs(frank-cpc)

@@ -27,8 +27,6 @@ void FirstStartDialog (void);
 void PrintCmdLinePars(void);
 void SaveScreenImage(void);
 
-#ifdef PICO_BUILD
 /* Set the path returned by the next SelectDiskFile() call.
  * Called by cpc_loader when the user picks a disk in the UI. */
 void SetPendingDiskPath(const char *path);
-#endif

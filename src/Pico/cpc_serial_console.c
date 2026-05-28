@@ -1,5 +1,5 @@
 /*
- * frank-cpc — CPC emulator for RP2350
+ * frank-cpc — Amstrad CPC for RP2350
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * cpc_serial_console.c — USB serial command console for automated control.

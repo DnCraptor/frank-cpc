@@ -5,7 +5,7 @@
  * public symbols named graphics_init / graphics_set_palette /
  * graphics_set_mode / graphics_set_buffer / draw_text / clrScr /
  * graphics_get_video_mode — all of which either collide with, or have
- * a different signature than, frank-msx's own video API in HDMI.h.
+ * a different signature than, frank-cpc's own video API in HDMI.h.
  *
  * We keep the murmnes source 100% verbatim by textually renaming each
  * public entry point to a tv_* prefix at compile time. The shim in

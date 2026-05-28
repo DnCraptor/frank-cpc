@@ -1,5 +1,5 @@
 /*
- * frank-cpc — CPC emulator for RP2350
+ * frank-cpc — Amstrad CPC for RP2350
  * SPDX-License-Identifier: GPL-2.0-only
  *
  * tape.h — Platform-level tape GPIO and query functions.

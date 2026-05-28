@@ -9,7 +9,7 @@
  *
  * We override memset/memcpy in the TV TUs only, via `-include` and
  * __builtin wrappers that expand to small SRAM-resident loops.  This
- * doesn't touch the rest of frank-msx's memset/memcpy usage.
+ * doesn't touch the rest of frank-cpc's memset/memcpy usage.
  */
 
 #ifndef TV_MEM_H_

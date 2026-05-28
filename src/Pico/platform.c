@@ -1,7 +1,8 @@
 /*
- * frank-cpc — CPC emulator for RP2350
+ * frank-cpc — Amstrad CPC for RP2350
  *
  * Copyright (c) 2026 Mikhail Matveev <xtreme@rh1.tech>
+ * https://github.com/rh1tech/frank-cpc
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -26,6 +27,7 @@
 #include "tape.h"
 #include "nespad.h"
 #include "crash_handler.h"
+#include "usbhid_wrapper.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -375,71 +377,84 @@ static const uint8_t ps2_to_cpc_matrix[CPC_MATRIX_SIZE][2] = {
 };
 #undef _U
 
-void cpc_ps2_feed_events(void) {
-    static bool shifted = false;
-    static bool ctrl_held = false;
-    static bool alt_held = false;
-    int pressed;
-    unsigned char key;
+/* Shared key-event handler for both PS/2 and USB HID keyboards. */
+static bool s_shifted = false;
+static bool s_ctrl_held = false;
+static bool s_alt_held = false;
+
+static void handle_key_event(int pressed, unsigned char key) {
     uint8_t *km = cpc_get_keyboard_matrix();
 
-    ps2kbd_tick();
-    while (ps2kbd_get_key(&pressed, &key)) {
-        if (key == PSC_LShift || key == PSC_RShift)
-            shifted = pressed != 0;
-        if (key == PSC_LCtrl || key == PSC_RCtrl)
-            ctrl_held = pressed != 0;
-        if (key == PSC_LAlt || key == PSC_RAlt)
-            alt_held = pressed != 0;
+    if (key == PSC_LShift || key == PSC_RShift)
+        s_shifted = pressed != 0;
+    if (key == PSC_LCtrl || key == PSC_RCtrl)
+        s_ctrl_held = pressed != 0;
+    if (key == PSC_LAlt || key == PSC_RAlt)
+        s_alt_held = pressed != 0;
 
-        unsigned int ks = scancode_to_keysym((unsigned int)key,
-                                             shifted && key != PSC_LShift && key != PSC_RShift);
+    unsigned int ks = scancode_to_keysym((unsigned int)key,
+                                         s_shifted && key != PSC_LShift && key != PSC_RShift);
 
-        if (pressed) {
-            /* Ctrl+Alt+Delete: reset emulator */
-            if (ks == KS_Delete && ctrl_held && alt_held) {
-                extern void cpc_settings_do_reset(void);
-                cpc_settings_do_reset();
-                continue;
-            }
-            /* F11: disk browser menu */
-            if (ks == KS_F11) {
-                cpc_ui_open_disk_menu();
-                continue;
-            }
-            /* F12: toggle settings overlay */
-            if (ks == KS_F12) {
-                cpc_ui_toggle();
-                continue;
-            }
-            /* While overlay is open, route all keys to it */
-            if (cpc_ui_wants_keys()) {
-                cpc_ui_handle_key(ks);
-                continue;
-            }
-        } else {
-            /* Release events must always reach the matrix — if the UI
-             * overlay opens while a key is held, the release would be
-             * swallowed and the key stays "pressed" in the CPC. */
-            if (cpc_ui_wants_keys()) {
-                /* fall through to matrix update below */
-            }
+    if (pressed) {
+        /* Ctrl+Alt+Delete: reset emulator */
+        if (ks == KS_Delete && s_ctrl_held && s_alt_held) {
+            extern void cpc_settings_do_reset(void);
+            cpc_settings_do_reset();
+            return;
         }
-
-        /* Direct CPC keyboard matrix manipulation.
-         * Each PS/2 scancode maps to a fixed (row, bit) in the CPC's
-         * 10×8 keyboard matrix. Press clears the bit, release sets it. */
-        if (key < CPC_MATRIX_SIZE) {
-            uint8_t row = ps2_to_cpc_matrix[key][0];
-            uint8_t bit = ps2_to_cpc_matrix[key][1];
-            if (row < 10) {
-                if (pressed)
-                    km[row] &= ~(1u << bit);
-                else
-                    km[row] |= (1u << bit);
-            }
+        /* F11: disk browser menu */
+        if (ks == KS_F11) {
+            cpc_ui_open_disk_menu();
+            return;
+        }
+        /* F12: toggle settings overlay */
+        if (ks == KS_F12) {
+            cpc_ui_toggle();
+            return;
+        }
+        /* While overlay is open, route all keys to it */
+        if (cpc_ui_wants_keys()) {
+            cpc_ui_handle_key(ks);
+            return;
+        }
+    } else {
+        /* Release events must always reach the matrix — if the UI
+         * overlay opens while a key is held, the release would be
+         * swallowed and the key stays "pressed" in the CPC. */
+        if (cpc_ui_wants_keys()) {
+            /* fall through to matrix update below */
         }
     }
+
+    /* Direct CPC keyboard matrix manipulation.
+     * Each PS/2 scancode maps to a fixed (row, bit) in the CPC's
+     * 10×8 keyboard matrix. Press clears the bit, release sets it. */
+    if (key < CPC_MATRIX_SIZE) {
+        uint8_t row = ps2_to_cpc_matrix[key][0];
+        uint8_t bit = ps2_to_cpc_matrix[key][1];
+        if (row < 10) {
+            if (pressed)
+                km[row] &= ~(1u << bit);
+            else
+                km[row] |= (1u << bit);
+        }
+    }
+}
+
+void cpc_ps2_feed_events(void) {
+    int pressed;
+    unsigned char key;
+
+    /* PS/2 keyboard (PIO-based driver). */
+    ps2kbd_tick();
+    while (ps2kbd_get_key(&pressed, &key))
+        handle_key_event(pressed, key);
+
+    /* USB HID keyboard + gamepad. Stubs out to zero when
+     * USB_HID_ENABLED is off — no runtime cost on PS/2-only builds. */
+    usbhid_wrapper_tick();
+    while (usbhid_wrapper_get_key(&pressed, &key))
+        handle_key_event(pressed, key);
 }
 
 /* ------------------------------------------------------------------ */
@@ -463,23 +478,38 @@ void cpc_nespad_init(void) {
 }
 
 void cpc_nespad_poll(void) {
-    if (!g_nespad_initialized) return;
-
     uint8_t *km = cpc_get_keyboard_matrix();
-
-    nespad_read();
-
-    uint32_t s = nespad_state;
     uint8_t joy = 0xFF;  /* all released (active-low) */
 
-    if (s & DPAD_UP)    joy &= ~(1u << 0);
-    if (s & DPAD_DOWN)  joy &= ~(1u << 1);
-    if (s & DPAD_LEFT)  joy &= ~(1u << 2);
-    if (s & DPAD_RIGHT) joy &= ~(1u << 3);
-    if (s & DPAD_A)     joy &= ~(1u << 4);  /* A → Fire 1 */
-    if (s & DPAD_B)     joy &= ~(1u << 5);  /* B → Fire 2 */
-    if (s & DPAD_Y)     joy &= ~(1u << 4);  /* Y → Fire 1 (alt) */
-    if (s & DPAD_X)     joy &= ~(1u << 5);  /* X → Fire 2 (alt) */
+    /* NES/SNES wired gamepad */
+    if (g_nespad_initialized) {
+        nespad_read();
+
+        uint32_t s = nespad_state;
+
+        if (s & DPAD_UP)    joy &= ~(1u << 0);
+        if (s & DPAD_DOWN)  joy &= ~(1u << 1);
+        if (s & DPAD_LEFT)  joy &= ~(1u << 2);
+        if (s & DPAD_RIGHT) joy &= ~(1u << 3);
+        if (s & DPAD_A)     joy &= ~(1u << 4);  /* A → Fire 1 */
+        if (s & DPAD_B)     joy &= ~(1u << 5);  /* B → Fire 2 */
+        if (s & DPAD_Y)     joy &= ~(1u << 4);  /* Y → Fire 1 (alt) */
+        if (s & DPAD_X)     joy &= ~(1u << 5);  /* X → Fire 2 (alt) */
+    }
+
+    /* USB gamepad (stubs to 0 when USB_HID_ENABLED is off). Convert
+     * BTN_* bitmask to CPC active-low joystick format. */
+    {
+        unsigned int usb = usbhid_wrapper_get_joystick();
+        if (usb & 0x0004) joy &= ~(1u << 0);  /* BTN_UP    → bit 0 */
+        if (usb & 0x0008) joy &= ~(1u << 1);  /* BTN_DOWN  → bit 1 */
+        if (usb & 0x0001) joy &= ~(1u << 2);  /* BTN_LEFT  → bit 2 */
+        if (usb & 0x0002) joy &= ~(1u << 3);  /* BTN_RIGHT → bit 3 */
+        if (usb & 0x0010) joy &= ~(1u << 4);  /* BTN_FIREA → Fire 1 */
+        if (usb & 0x0020) joy &= ~(1u << 5);  /* BTN_FIREB → Fire 2 */
+        if (usb & 0x1000) joy &= ~(1u << 4);  /* BTN_FIREY → Fire 1 (alt) */
+        if (usb & 0x0800) joy &= ~(1u << 5);  /* BTN_FIREX → Fire 2 (alt) */
+    }
 
     /* Merge with keyboard: keep keyboard bits that are already pressed
      * (cleared), OR in gamepad bits (also active-low). */

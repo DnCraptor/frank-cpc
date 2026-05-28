@@ -1,10 +1,11 @@
 #!/bin/bash
 #
-# frank-cpc — CPC emulator for RP2350
+# frank-cpc — Amstrad CPC for RP2350
+#
 # Copyright (c) 2026 Mikhail Matveev <xtreme@rh1.tech>
+# https://github.com/rh1tech/frank-cpc
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# release.sh - build release UF2 for frank-cpc (all platforms)
 #
 # Build matrix:
 #   m2p2_frank-cpc_*_hdmi-pio.uf2       (M2, PIO HDMI + I2S)
@@ -103,6 +104,7 @@ for ENTRY in "${BUILD_MATRIX[@]}"; do
         -DPICO_PLATFORM=rp2350 \
         -DPLATFORM="$PLAT" \
         -DHDMI_DRIVER="$DRIVER" \
+        -DUSB_HID_ENABLED=ON \
         > /dev/null 2>&1 && \
        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) > /dev/null 2>&1; then
         if [[ -f "frank-cpc.uf2" ]]; then

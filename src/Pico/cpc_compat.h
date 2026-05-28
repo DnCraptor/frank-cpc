@@ -1,5 +1,5 @@
 /*
- * frank-cpc — CPC emulator for RP2350
+ * frank-cpc — Amstrad CPC for RP2350
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * cpc_compat.h — Platform compatibility layer for Pico build.
