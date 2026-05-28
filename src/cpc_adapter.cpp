@@ -136,6 +136,7 @@ extern "C" void graphics_set_palette(uint8_t idx, uint32_t rgb);
 void InitAY();
 void ResetAYChipEmulation();
 void InitAYCounterVars();
+void Calculate_Level_Tables();
 
 /* ------------------------------------------------------------------ */
 /* ROM loading via FatFS                                              */
@@ -820,6 +821,37 @@ void cpc_set_rom(int slot, const char *path) {
         std::strncpy(CPC.rom_path, path, 255);
         CPC.rom_path[255] = 0;
     }
+}
+
+void cpc_set_jumpers(unsigned int jumpers) {
+    CPC.jumpers = jumpers;
+}
+
+void cpc_set_speed(unsigned int speed) {
+    if (speed < MIN_SPEED_SETTING) speed = MIN_SPEED_SETTING;
+    if (speed > MAX_SPEED_SETTING) speed = MAX_SPEED_SETTING;
+    CPC.speed = speed;
+}
+
+void cpc_set_limit_speed(int enabled) {
+    CPC.limit_speed = enabled ? 1 : 0;
+}
+
+void cpc_set_snd_enabled(int enabled) {
+    CPC.snd_enabled = enabled ? 1 : 0;
+}
+
+void cpc_set_snd_volume(unsigned int vol) {
+    if (vol > 100) vol = 100;
+    CPC.snd_volume = vol;
+}
+
+void cpc_set_snd_stereo(unsigned int mode) {
+    CPC.snd_stereo = mode ? 1 : 0;
+}
+
+void cpc_audio_reinit_volume(void) {
+    Calculate_Level_Tables();
 }
 
 void cpc_get_palette_rgb(uint32_t *rgb32) {

@@ -65,6 +65,15 @@ int cpc_snapshot_load(const char *path);
 void cpc_set_model(int model);       /* 0=464, 1=664, 2=6128, 3=6128+ */
 void cpc_set_ram_size(int kb);       /* 64, 128, or 576 */
 void cpc_set_rom(int slot, const char *path);
+void cpc_set_jumpers(unsigned int jumpers); /* PPI port B jumper config */
+void cpc_set_speed(unsigned int speed);     /* 1..32 (×25 = percent) */
+void cpc_set_limit_speed(int enabled);      /* 0=unlimited, 1=cap to speed */
+void cpc_set_snd_enabled(int enabled);      /* 0=off, 1=on */
+void cpc_set_snd_volume(unsigned int vol);  /* 0..100 */
+void cpc_set_snd_stereo(unsigned int mode); /* 0=mono, 1=stereo */
+
+/* Re-calculate audio level tables (e.g. after volume change). */
+void cpc_audio_reinit_volume(void);
 
 /* Palette: get current CPC hardware palette as RGB888 values.
  * Returns 32 entries (27 CPC colours + padding). */

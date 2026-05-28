@@ -5,8 +5,9 @@
  * cpc_settings.h — mutable runtime settings.
  *
  * Persisted to /cpc/cpc.ini on the SD card.
- * Model/Memory/Customer/ROM changes require a full CPC reset (InitMem + ResetZ80).
- * Monitor (colour filter) takes effect immediately.
+ * Model/Memory/Customer/Speed/Sound/Stereo/ROM changes require a full CPC
+ * reset (InitMem + ResetZ80).
+ * Monitor, Limit Speed, and Volume take effect immediately.
  */
 #ifndef CPC_SETTINGS_H
 #define CPC_SETTINGS_H
@@ -37,9 +38,13 @@ typedef enum {
     CPC_SETTING_MEMORY,     /* 64K / 128K / 576K              (needs reset) */
     CPC_SETTING_MONITOR,    /* Color / Green                  (live)        */
     CPC_SETTING_CUSTOMER,   /* Amstrad / Schneider / ...      (needs reset) */
+    CPC_SETTING_SPEED,      /* 50%–400% emulation speed       (needs reset) */
+    CPC_SETTING_LIMIT_SPEED,/* On / Off — cap to set speed    (live)        */
+    CPC_SETTING_SND_ENABLED,/* On / Off — master sound toggle (needs reset) */
+    CPC_SETTING_VOLUME,     /* 0–100% volume                  (live)        */
+    CPC_SETTING_STEREO,     /* Mono / Stereo                  (needs reset) */
     CPC_SETTING_AUDIO_IN,   /* Off / GPIO22                   (live)        */
     CPC_SETTING_FAST_TAPE,  /* Off / On — skip frame sync     (live)        */
-    CPC_SETTING_STEREO,     /* Mono / ACB / ABC               (live)        */
     CPC_SETTING_AUDIO_DRV,  /* I2S / PWM / HDMI               (live)        */
     CPC_SETTING_COUNT,      /* ---- visible settings end here ---- */
     CPC_SETTING_ROM,        /* Auto / <filename.rom>  — hidden for now      */
@@ -56,8 +61,12 @@ typedef struct {
     char    disk_b[128]; /* full path to disk image for drive B on boot   */
     char    tape[128];   /* full path to tape image (.cdt/.cas) on boot   */
     uint8_t fast_tape;   /* 0=Off, 1=On — run unthrottled during tape load */
-    uint8_t stereo;      /* 0=Mono, 1=ACB, 2=ABC stereo mode              */
+    uint8_t stereo;      /* 0=Mono, 1=Stereo                              */
     uint8_t audio_driver; /* cpc_audio_driver_t: I2S / PWM / HDMI         */
+    uint8_t speed;       /* index into SPEED_PRESETS (0..6)                */
+    uint8_t limit_speed; /* 0=Off, 1=On                                   */
+    uint8_t snd_enabled; /* 0=Off, 1=On                                   */
+    uint8_t volume;      /* 0..10 (×10 = 0%..100%)                        */
 } cpc_settings_t;
 
 extern cpc_settings_t g_cpc_settings;

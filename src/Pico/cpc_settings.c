@@ -68,6 +68,10 @@ cpc_settings_t g_cpc_settings = {
     .monitor  = 0,  /* Color    */
     .customer = 0,  /* Amstrad  */
     .rom_idx  = 0,  /* Auto     */
+    .speed    = 2,  /* 100% (index into SPEED_PRESETS) */
+    .limit_speed = 1, /* On */
+    .snd_enabled = 1, /* On */
+    .volume   = 8,  /* 80% (×10) */
 #if defined(HDMI_PIO_AUDIO)
     .audio_driver = CPC_AUDIO_HDMI,
 #else
@@ -83,7 +87,22 @@ static const char *MODEL_LABELS[]    = { "CPC 464", "CPC 664", "CPC 6128" };
 static const char *MEMORY_LABELS[]   = { "64 KB", "128 KB", "576 KB" };
 static const char *MONITOR_LABELS[]  = { "Color", "Green" };
 static const char *FAST_TAPE_LABELS[] = { "Off", "On" };
-static const char *STEREO_LABELS[] = { "Mono", "ACB", "ABC" };
+static const char *STEREO_LABELS[] = { "Mono", "Stereo" };
+static const char *ONOFF_LABELS[] = { "Off", "On" };
+
+/* Speed presets: CPC.speed values. speed×25 = percent. */
+static const uint8_t SPEED_PRESETS[] = { 2, 3, 4, 5, 6, 8, 16 };
+static const char *SPEED_LABELS[] = {
+    "50%", "75%", "100%", "125%", "150%", "200%", "400%"
+};
+#define SPEED_PRESET_COUNT ((int)(sizeof(SPEED_PRESETS)/sizeof(SPEED_PRESETS[0])))
+
+/* Volume: stored as 0..10, displayed as 0%..100% in steps of 10 */
+static const char *VOLUME_LABELS[] = {
+    "0%", "10%", "20%", "30%", "40%", "50%",
+    "60%", "70%", "80%", "90%", "100%"
+};
+#define VOLUME_STEPS 11
 
 static const char *AUDIO_DRV_LABELS[CPC_AUDIO_COUNT] = {
     "I2S", "PWM", "HDMI",
@@ -110,9 +129,13 @@ int cpc_settings_choices(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return 3;
         case CPC_SETTING_MONITOR:  return 2;
         case CPC_SETTING_CUSTOMER: return 8;
+        case CPC_SETTING_SPEED:    return SPEED_PRESET_COUNT;
+        case CPC_SETTING_LIMIT_SPEED: return 2;
+        case CPC_SETTING_SND_ENABLED: return 2;
+        case CPC_SETTING_VOLUME:   return VOLUME_STEPS;
         case CPC_SETTING_AUDIO_IN: return 2;
         case CPC_SETTING_FAST_TAPE: return 2;
-        case CPC_SETTING_STEREO:  return 3;
+        case CPC_SETTING_STEREO:  return 2;
         case CPC_SETTING_AUDIO_DRV: return AUDIO_DRV_CYCLE_LEN;
         case CPC_SETTING_ROM:      return g_cpc_rom_count > 0 ? g_cpc_rom_count : 1;
         default: return 0;
@@ -125,6 +148,10 @@ const char *cpc_settings_label(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return "Memory";
         case CPC_SETTING_MONITOR:  return "Monitor";
         case CPC_SETTING_CUSTOMER: return "Customer";
+        case CPC_SETTING_SPEED:    return "Speed";
+        case CPC_SETTING_LIMIT_SPEED: return "Limit Speed";
+        case CPC_SETTING_SND_ENABLED: return "Sound";
+        case CPC_SETTING_VOLUME:   return "Volume";
         case CPC_SETTING_AUDIO_IN: return "Audio In";
         case CPC_SETTING_FAST_TAPE: return "Fast Tape";
         case CPC_SETTING_STEREO:  return "Audio Output";
@@ -140,9 +167,21 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
         case CPC_SETTING_MEMORY:   return MEMORY_LABELS[g_cpc_settings.memory];
         case CPC_SETTING_MONITOR:  return MONITOR_LABELS[g_cpc_settings.monitor];
         case CPC_SETTING_CUSTOMER: return CUSTOMER_LABELS[g_cpc_settings.customer];
+        case CPC_SETTING_SPEED: {
+            uint8_t idx = g_cpc_settings.speed;
+            if (idx >= SPEED_PRESET_COUNT) idx = 2;
+            return SPEED_LABELS[idx];
+        }
+        case CPC_SETTING_LIMIT_SPEED: return ONOFF_LABELS[g_cpc_settings.limit_speed & 1];
+        case CPC_SETTING_SND_ENABLED: return ONOFF_LABELS[g_cpc_settings.snd_enabled & 1];
+        case CPC_SETTING_VOLUME: {
+            uint8_t idx = g_cpc_settings.volume;
+            if (idx >= VOLUME_STEPS) idx = VOLUME_STEPS - 1;
+            return VOLUME_LABELS[idx];
+        }
         case CPC_SETTING_AUDIO_IN: return tape_get_gpio_mode() ? "GPIO22" : "Off";
         case CPC_SETTING_FAST_TAPE: return FAST_TAPE_LABELS[g_cpc_settings.fast_tape & 1];
-        case CPC_SETTING_STEREO:  return STEREO_LABELS[g_cpc_settings.stereo % 3];
+        case CPC_SETTING_STEREO:  return STEREO_LABELS[g_cpc_settings.stereo & 1];
         case CPC_SETTING_AUDIO_DRV:
             if (g_cpc_settings.audio_driver < CPC_AUDIO_COUNT)
                 return AUDIO_DRV_LABELS[g_cpc_settings.audio_driver];
@@ -157,9 +196,17 @@ const char *cpc_settings_value_label(cpc_setting_id_t id) {
 }
 
 bool cpc_settings_needs_reset(cpc_setting_id_t id) {
-    return id != CPC_SETTING_MONITOR && id != CPC_SETTING_AUDIO_IN
-        && id != CPC_SETTING_FAST_TAPE && id != CPC_SETTING_STEREO
-        && id != CPC_SETTING_AUDIO_DRV;
+    switch (id) {
+        case CPC_SETTING_MONITOR:
+        case CPC_SETTING_AUDIO_IN:
+        case CPC_SETTING_FAST_TAPE:
+        case CPC_SETTING_AUDIO_DRV:
+        case CPC_SETTING_LIMIT_SPEED:
+        case CPC_SETTING_VOLUME:
+            return false;
+        default:
+            return true;
+    }
 }
 
 static void step_u8(uint8_t *v, int delta, int n) {
@@ -182,6 +229,19 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
             cpc_settings_apply_visual();
             break;
         case CPC_SETTING_CUSTOMER: step_u8(&g_cpc_settings.customer, delta, n); break;
+        case CPC_SETTING_SPEED:    step_u8(&g_cpc_settings.speed,    delta, n); break;
+        case CPC_SETTING_LIMIT_SPEED:
+            step_u8(&g_cpc_settings.limit_speed, delta, n);
+            cpc_set_limit_speed(g_cpc_settings.limit_speed);
+            break;
+        case CPC_SETTING_SND_ENABLED:
+            step_u8(&g_cpc_settings.snd_enabled, delta, n);
+            break;
+        case CPC_SETTING_VOLUME:
+            step_u8(&g_cpc_settings.volume, delta, n);
+            cpc_set_snd_volume((unsigned)g_cpc_settings.volume * 10);
+            cpc_audio_reinit_volume();
+            break;
         case CPC_SETTING_AUDIO_IN:
             tape_set_gpio_mode(!tape_get_gpio_mode());
             break;
@@ -212,6 +272,18 @@ void cpc_settings_apply_visual(void) {
 void cpc_settings_apply(void) {
     static const int MEM_MAP[] = { 64, 128, 576 };
 
+    /* Customer → CPC jumpers: bits 1-3 encode manufacturer, bit 4 = 50Hz */
+    static const uint8_t CUSTOMER_JUMPERS[] = {
+        0x1e, /* 0 Amstrad   (code 7) */
+        0x1a, /* 1 Schneider (code 5) */
+        0x10, /* 2 ISP       (code 0) */
+        0x12, /* 3 Triumph   (code 1) */
+        0x14, /* 4 Saisho    (code 2) */
+        0x16, /* 5 Solavox   (code 3) */
+        0x18, /* 6 AWA       (code 4) */
+        0x1c, /* 7 Orion     (code 6) */
+    };
+
     /* Model */
     cpc_set_model((int)g_cpc_settings.model);
 
@@ -223,11 +295,29 @@ void cpc_settings_apply(void) {
     /* Monitor */
     cpc_settings_apply_visual();
 
-    /* Customer — set via CPC jumpers (PPI Port B) */
-    /* Customer value is now handled by the adapter's CPC.jumpers */
+    /* Customer → jumpers */
+    uint8_t cust = g_cpc_settings.customer;
+    if (cust > 7) cust = 0;
+    cpc_set_jumpers(CUSTOMER_JUMPERS[cust]);
 
-    /* AY stereo mode — TODO: expose via adapter */
-    /* ay_stereo_mode = g_cpc_settings.stereo; */
+    /* Speed */
+    uint8_t spd_idx = g_cpc_settings.speed;
+    if (spd_idx >= SPEED_PRESET_COUNT) spd_idx = 2;
+    cpc_set_speed(SPEED_PRESETS[spd_idx]);
+
+    /* Limit speed */
+    cpc_set_limit_speed(g_cpc_settings.limit_speed);
+
+    /* Sound */
+    cpc_set_snd_enabled(g_cpc_settings.snd_enabled);
+
+    /* Volume (stored 0..10, engine wants 0..100) */
+    uint8_t vol = g_cpc_settings.volume;
+    if (vol > 10) vol = 10;
+    cpc_set_snd_volume((unsigned)vol * 10);
+
+    /* Stereo */
+    cpc_set_snd_stereo(g_cpc_settings.stereo);
 }
 
 /* Full CPC reset applying all settings.  Called from cpc_ui when the
@@ -235,9 +325,12 @@ void cpc_settings_apply(void) {
 void cpc_settings_do_reset(void) {
     g_cpc_settings_dirty = false;
     cpc_settings_apply();
-    printf("settings: reset model=%d ram=%d\n",
+    printf("settings: reset model=%d ram=%d speed=%d%% vol=%d%%\n",
            (int)g_cpc_settings.model,
-           (int)g_cpc_settings.memory);
+           (int)g_cpc_settings.memory,
+           (int)SPEED_PRESETS[g_cpc_settings.speed < SPEED_PRESET_COUNT
+                              ? g_cpc_settings.speed : 2] * 25,
+           (int)g_cpc_settings.volume * 10);
     cpc_engine_reset();
 }
 
@@ -257,8 +350,12 @@ static const ini_field_t INI_FIELDS[] = {
     { "monitor",  &g_cpc_settings.monitor,  2 },
     { "customer", &g_cpc_settings.customer, 8 },
     { "fast_tape", &g_cpc_settings.fast_tape, 2 },
-    { "stereo",    &g_cpc_settings.stereo,    3 },
+    { "stereo",    &g_cpc_settings.stereo,    2 },
     { "audio_drv", &g_cpc_settings.audio_driver, CPC_AUDIO_COUNT },
+    { "speed",     &g_cpc_settings.speed,     SPEED_PRESET_COUNT },
+    { "limit_speed", &g_cpc_settings.limit_speed, 2 },
+    { "snd_enabled", &g_cpc_settings.snd_enabled, 2 },
+    { "volume",    &g_cpc_settings.volume,    VOLUME_STEPS },
 };
 #define INI_FIELD_COUNT ((int)(sizeof(INI_FIELDS)/sizeof(INI_FIELDS[0])))
 
