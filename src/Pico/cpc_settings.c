@@ -203,6 +203,7 @@ bool cpc_settings_needs_reset(cpc_setting_id_t id) {
         case CPC_SETTING_AUDIO_DRV:
         case CPC_SETTING_LIMIT_SPEED:
         case CPC_SETTING_VOLUME:
+        case CPC_SETTING_SND_ENABLED:
             return false;
         default:
             return true;
@@ -236,6 +237,7 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
             break;
         case CPC_SETTING_SND_ENABLED:
             step_u8(&g_cpc_settings.snd_enabled, delta, n);
+            cpc_set_snd_enabled(g_cpc_settings.snd_enabled);
             break;
         case CPC_SETTING_VOLUME:
             step_u8(&g_cpc_settings.volume, delta, n);
