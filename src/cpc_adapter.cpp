@@ -31,6 +31,7 @@ extern "C" {
 #include "crash_handler.h"
 #include "ff.h"
 #include "Pico/cpc_loader.h"
+#include "Pico/cpc_settings.h"
 }
 
 /* ------------------------------------------------------------------ */
@@ -592,8 +593,9 @@ int cpc_engine_init(void) {
     emulator_reset();
     z80_sync_ram_shadow(); /* copy CPC RAM to SRAM shadow for fast reads */
 
-    /* Set up hardware palette */
+    /* Set up hardware palette, then re-apply green monitor if active */
     setup_hw_palette();
+    cpc_apply_green_monitor(g_cpc_settings.monitor);
 
     printf("cpc_adapter: caprice32 engine initialized\n");
     return 0;
@@ -605,6 +607,7 @@ void cpc_engine_reset(void) {
     /* Restore standard CPC hardware palette after leaving Plus mode */
     if (CPC.model <= 2) {
         setup_hw_palette();
+        cpc_apply_green_monitor(g_cpc_settings.monitor);
     }
 }
 

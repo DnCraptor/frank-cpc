@@ -59,14 +59,6 @@ void InitCPC(int Start) {
 
 word LoopZ80(register Z80 *R) {
   static int i;
-  static uint64_t hb_last_us = 0;
-  static uint32_t hb_frames = 0;
-  static uint32_t hb_skips = 0;
-  static uint32_t hb_max_work_us = 0;
-  static uint32_t hb_max_redraw_us = 0;
-  static uint32_t hb_redraw_count = 0;
-  static uint32_t hb_blank_count = 0;
-  extern uint32_t g_frame_skips;
   (void)R;
   IRQCount++;
   if (SeekTrackTime > 0) SeekTrackTime -= 3.3333f;
@@ -124,17 +116,11 @@ word LoopZ80(register Z80 *R) {
       }
       int has_mid_frame = pico_has_ink_events() || pico_has_crtc_events();
       if (!fast_tape_active && (!palette_blank || has_mid_frame)) {
-        uint64_t t0 = time_us_64();
         if (ChangeInk || pico_has_ink_events() || pico_has_crtc_events()) {
           RedrawScreenImage();
         } else {
           RedrawDirtyRows();
         }
-        uint32_t dt = (uint32_t)(time_us_64() - t0);
-        if (dt > hb_max_redraw_us) hb_max_redraw_us = dt;
-        if (dt > 0) hb_redraw_count++;
-      } else {
-        hb_blank_count++;
       }
     }
     ChangeInk = FALSE;

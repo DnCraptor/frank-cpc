@@ -559,6 +559,9 @@ void cpc_pico_main(void) {
 
     printf("CPC initialized. Starting emulation...\n");
 
+    uint64_t fps_last_us = 0;
+    uint32_t fps_frames = 0;
+
     while (1) {
         crash_handler_feed();
         cpc_ps2_feed_events();
@@ -581,5 +584,14 @@ void cpc_pico_main(void) {
         cpc_frame_present();
         cpc_serial_poll();
         cpc_frame_sync();
+
+        fps_frames++;
+        uint64_t now = time_us_64();
+        if (fps_last_us == 0) fps_last_us = now;
+        if (now - fps_last_us >= 1000000u) {
+            printf("# FPS %u\n", fps_frames);
+            fps_frames = 0;
+            fps_last_us = now;
+        }
     }
 }
