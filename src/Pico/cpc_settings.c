@@ -15,8 +15,6 @@
 #include <string.h>
 #include <ctype.h>
 
-static int MonoScreen = 0;
-
 /* ---- ROM list --------------------------------------------------------- */
 
 char g_cpc_rom_list[CPC_ROM_MAX][32];
@@ -268,7 +266,7 @@ void cpc_settings_step(cpc_setting_id_t id, int delta) {
 }
 
 void cpc_settings_apply_visual(void) {
-    MonoScreen = g_cpc_settings.monitor ? 32 : 0;
+    cpc_apply_green_monitor(g_cpc_settings.monitor);
 }
 
 void cpc_settings_apply(void) {

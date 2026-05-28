@@ -50,7 +50,7 @@ int CreateBlankDsk(const char *path);
 #define SETTINGS_APPLY_ROW  (CPC_SETTING_COUNT + 3)
 #define SETTINGS_BACK_ROW   (CPC_SETTING_COUNT + 4)
 #define SETTINGS_TOTAL_ROWS (CPC_SETTING_COUNT + 5)
-#define SETTINGS_VISIBLE_ROWS 12
+#define SETTINGS_VISIBLE_ROWS 14
 
 /* Disk browser rows are dynamic depending on whether a disk is mounted:
  *   mounted:   row 0=[Eject]  row 1=[..]  row 2+=entries
@@ -455,7 +455,7 @@ static void render_settings_page(uint8_t *fb, int stride) {
             /* Value right-aligned; chevrons < > around value on selected row */
             const char *val  = cpc_settings_value_label((cpc_setting_id_t)i);
             int         vlen = (int)strlen(val);
-            int         vx   = x + cw + 2 - (vlen + 2) * UI_CHAR_W;
+            int         vx   = x + cw - (vlen + 2) * UI_CHAR_W;
             if (sel) ui_draw_string(fb, stride, vx - UI_CHAR_W,          y + 1, "<", fg);
             ui_draw_string        (fb, stride, vx,                        y + 1, val, fg);
             if (sel) ui_draw_string(fb, stride, vx + vlen * UI_CHAR_W + 2, y + 1, ">", fg);

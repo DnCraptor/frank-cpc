@@ -75,6 +75,10 @@ void cpc_set_snd_stereo(unsigned int mode); /* 0=mono, 1=stereo */
 /* Re-calculate audio level tables (e.g. after volume change). */
 void cpc_audio_reinit_volume(void);
 
+/* Apply green monitor filter to the hardware palette.
+ * green=1: convert all colours to green luminance; green=0: restore normal. */
+void cpc_apply_green_monitor(int green);
+
 /* Palette: get current CPC hardware palette as RGB888 values.
  * Returns 32 entries (27 CPC colours + padding). */
 void cpc_get_palette_rgb(uint32_t *rgb32);

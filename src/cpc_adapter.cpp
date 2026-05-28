@@ -854,6 +854,23 @@ void cpc_audio_reinit_volume(void) {
     Calculate_Level_Tables();
 }
 
+void cpc_apply_green_monitor(int green) {
+    uint32_t rgb[32];
+    std::memcpy(rgb, cpc_rgb_table, sizeof(rgb));
+    if (green) {
+        for (int i = 0; i < 32; i++) {
+            /* Convert RGB to luminance, output as green only */
+            unsigned r = (rgb[i] >> 16) & 0xFF;
+            unsigned g = (rgb[i] >>  8) & 0xFF;
+            unsigned b = (rgb[i]      ) & 0xFF;
+            unsigned lum = (r * 77 + g * 150 + b * 29) >> 8;
+            rgb[i] = lum << 8; /* green channel only */
+        }
+    }
+    for (int i = 0; i < 32; i++)
+        graphics_set_palette((uint8_t)i, rgb[i]);
+}
+
 void cpc_get_palette_rgb(uint32_t *rgb32) {
     std::memcpy(rgb32, cpc_rgb_table, 32 * sizeof(uint32_t));
 }

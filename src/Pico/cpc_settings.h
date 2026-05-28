@@ -90,8 +90,8 @@ void cpc_settings_step(cpc_setting_id_t id, int delta);
 /* True when the setting requires a CPC reset to take effect. */
 bool cpc_settings_needs_reset(cpc_setting_id_t id);
 
-/* Apply all settings to the CPC globals (CPCtype, CPCMaxMem, MonoScreen,
- * Customer, g_basic_rom_override).  Call before InitMem() / ResetZ80(). */
+/* Apply all settings to the CPC globals (model, ram, jumpers, speed,
+ * sound, stereo).  Call before InitMem() / ResetZ80(). */
 void cpc_settings_apply(void);
 
 /* Apply only the live (no-reset) settings — currently just the monitor. */
