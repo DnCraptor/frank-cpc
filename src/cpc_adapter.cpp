@@ -1239,17 +1239,15 @@ static int screenshot_counter = 0;
 int cpc_screenshot_save(void) {
     if (!scanline_render_target) return -1;
 
-    f_mkdir("/cpc");
-    f_mkdir("/cpc/screenshot");
-
-    /* Static FIL avoids ~600 bytes on stack. */
-    static FIL f;
-
     screenshot_counter++;
     if (screenshot_counter > 9999) screenshot_counter = 1;
 
     char path[40];
     snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", screenshot_counter);
+
+    FIL f;
+    /* Ensure directory exists — ignore errors (may already exist) */
+    f_mkdir("/cpc/screenshot");
 
     const int W = CPC_FB_WIDTH;   /* 320 */
     const int H = CPC_FB_HEIGHT;  /* 240 */
