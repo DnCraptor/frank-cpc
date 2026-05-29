@@ -13,13 +13,18 @@
 /*------------------------------------------------------------------------*/
 
 #include <stdlib.h>		/* with POSIX API */
-
+#include "psram_allocator.h"
 
 void* ff_memalloc (	/* Returns pointer to the allocated memory block (null if not enough core) */
 	UINT msize		/* Number of bytes to allocate */
 )
 {
-	void *p = malloc((size_t)msize);	/* Allocate a new memory block */
+	/* Try PSRAM first to avoid exhausting the small internal SRAM heap.
+	 * Fall back to malloc if PSRAM is unavailable. */
+	void *p = psram_malloc((size_t)msize);
+	if (!p) {
+		p = malloc((size_t)msize);
+	}
 	if (!p) {
 		printf("ff_memalloc(%u) FAILED!\n", msize);
 	}
@@ -31,7 +36,12 @@ void ff_memfree (
 	void* mblock	/* Pointer to the memory block to free (no effect if null) */
 )
 {
-	free(mblock);	/* Free the memory block */
+	/* psram_free handles both PSRAM and non-PSRAM pointers correctly
+	 * (checks address range internally).  If the pointer is not in
+	 * PSRAM range, fall back to regular free. */
+	if (mblock) {
+		psram_free(mblock);
+	}
 }
 
 #endif
