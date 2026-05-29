@@ -44,6 +44,8 @@ void cpc_init_palette(void) {
     graphics_set_bgcolor(0x000000);
 }
 
+volatile bool g_screenshot_pending = false;
+
 void cpc_frame_present(void) {
 #if !defined(VGA_HSTX) && !defined(VIDEO_COMPOSITE)
     {
@@ -79,6 +81,12 @@ void cpc_frame_present(void) {
     memset(dst, border, (size_t)(CPC_FB_WIDTH * top_pad));
     memset(dst + CPC_FB_WIDTH * (top_pad + CPC_FB_HEIGHT), border,
            (size_t)(CPC_FB_WIDTH * (CPC_SCREEN_LINES - top_pad - CPC_FB_HEIGHT)));
+
+    /* Deferred screenshot: save clean CPC frame before UI overlay */
+    if (g_screenshot_pending) {
+        g_screenshot_pending = false;
+        cpc_screenshot_save();
+    }
 
     if (cpc_ui_is_visible())
         cpc_ui_render(dst, CPC_FB_WIDTH, CPC_SCREEN_LINES);

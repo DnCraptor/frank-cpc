@@ -212,7 +212,8 @@ static bool handle_settings_page(unsigned int ks) {
                 s_state = UI_HIDDEN;
             } else if (s_setting_row == SETTINGS_SCREENSHOT_ROW) {
                 s_state = UI_HIDDEN;
-                cpc_screenshot_save();
+                extern volatile bool g_screenshot_pending;
+                g_screenshot_pending = true;
             } else if (s_setting_row == SETTINGS_TAPE_REC_ROW) {
                 if (tape_rec_active()) {
                     tape_rec_stop("/cpc/tape_out.cdt");

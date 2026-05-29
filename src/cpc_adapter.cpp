@@ -138,6 +138,7 @@ static const uint32_t cpc_rgb_table[32] = {
 
 /* Forward declarations */
 extern "C" void graphics_set_palette(uint8_t idx, uint32_t rgb);
+extern "C" uint32_t graphics_get_palette(uint8_t idx);
 
 void InitAY();
 void ResetAYChipEmulation();
@@ -1300,8 +1301,9 @@ int cpc_screenshot_save(void) {
     hdr[28] = 8;  /* bpp */
     f_write(&f, hdr, 54, &bw);
 
-    /* Palette: use the live dynamic_rgb[] which holds the actual RGB888
-     * for every palette slot (both standard CPC and CPC Plus).
+    /* Palette: read the authoritative RGB888 from the display driver
+     * via graphics_get_palette(), which returns the exact value last
+     * passed to graphics_set_palette() for each index.
      * Write 32 entries at a time (128-byte chunks). */
     uint8_t pal4[128];
     for (int chunk = 0; chunk < 8; chunk++) {
@@ -1309,7 +1311,7 @@ int cpc_screenshot_save(void) {
         int base = chunk * 32;
         for (int i = 0; i < 32; i++) {
             int idx = base + i;
-            uint32_t rgb = asic_dynamic_rgb[idx];
+            uint32_t rgb = graphics_get_palette((uint8_t)idx);
             pal4[i * 4 + 0] = (uint8_t)(rgb & 0xFF);         /* B */
             pal4[i * 4 + 1] = (uint8_t)((rgb >> 8) & 0xFF);  /* G */
             pal4[i * 4 + 2] = (uint8_t)((rgb >> 16) & 0xFF); /* R */
