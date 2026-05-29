@@ -1232,38 +1232,24 @@ int CreateBlankDsk(const char *path) {
 /* Screenshot: save framebuffer as 8bpp BMP to SD card                */
 /* ------------------------------------------------------------------ */
 
+/* Persistent screenshot counter — increments each call, survives across frames
+ * but resets on reboot.  Avoids any FatFS directory scanning. */
+static int screenshot_counter = 0;
+
 int cpc_screenshot_save(void) {
     if (!scanline_render_target) return -1;
 
     f_mkdir("/cpc");
     f_mkdir("/cpc/screenshot");
 
-    /* Use static FIL/DIR to avoid ~600 bytes on stack (Pico limited stack).
-     * FatFS with LFN=3 does heap allocation per f_open/f_stat call (~1KB),
-     * so we scan the directory once to find the highest existing number. */
+    /* Static FIL avoids ~600 bytes on stack. */
     static FIL f;
-    static DIR dir;
-    static FILINFO fi;
 
-    int max_num = 0;
-    if (f_opendir(&dir, "/cpc/screenshot") == FR_OK) {
-        while (f_readdir(&dir, &fi) == FR_OK && fi.fname[0]) {
-            /* Match CPC_NNNN.BMP pattern */
-            if (fi.fname[0] == 'C' && fi.fname[1] == 'P' && fi.fname[2] == 'C' && fi.fname[3] == '_') {
-                int n = 0;
-                for (int i = 4; i < 8 && fi.fname[i] >= '0' && fi.fname[i] <= '9'; i++)
-                    n = n * 10 + (fi.fname[i] - '0');
-                if (n > max_num) max_num = n;
-            }
-        }
-        f_closedir(&dir);
-    }
-
-    int num = max_num + 1;
-    if (num > 9999) return -1;
+    screenshot_counter++;
+    if (screenshot_counter > 9999) screenshot_counter = 1;
 
     char path[40];
-    snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", num);
+    snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", screenshot_counter);
 
     const int W = CPC_FB_WIDTH;   /* 320 */
     const int H = CPC_FB_HEIGHT;  /* 240 */
