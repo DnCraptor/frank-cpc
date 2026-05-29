@@ -1235,27 +1235,25 @@ int CreateBlankDsk(const char *path) {
 int cpc_screenshot_save(void) {
     if (!scanline_render_target) return -1;
 
-    /* Ensure /cpc/screenshot/ directory exists */
     f_mkdir("/cpc");
     f_mkdir("/cpc/screenshot");
 
-    /* Find next available filename CPC_0001.BMP .. CPC_9999.BMP */
+    /* Use static FIL to avoid ~600 bytes on stack (Pico has limited stack) */
+    static FIL f;
+    static FILINFO fi;
+
+    /* Find next available filename */
     char path[40];
-    FIL f;
     int num;
     for (num = 1; num <= 9999; num++) {
         snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", num);
-        if (f_open(&f, path, FA_READ) != FR_OK) break; /* file doesn't exist — use it */
-        f_close(&f);
+        if (f_stat(path, &fi) != FR_OK) break;
     }
     if (num > 9999) return -1;
 
-    /* BMP file layout (8bpp indexed):
-     * 14-byte file header + 40-byte DIB header + 1024-byte palette + pixel data
-     * BMP stores rows bottom-to-top. */
     const int W = CPC_FB_WIDTH;   /* 320 */
     const int H = CPC_FB_HEIGHT;  /* 240 */
-    const int row_bytes = (W + 3) & ~3; /* pad to 4-byte boundary */
+    const int row_bytes = (W + 3) & ~3;
     const uint32_t palette_size = 256 * 4;
     const uint32_t pixel_offset = 14 + 40 + palette_size;
     const uint32_t pixel_data_size = (uint32_t)row_bytes * H;
@@ -1265,41 +1263,42 @@ int cpc_screenshot_save(void) {
 
     UINT bw;
 
-    /* BMP file header (14 bytes) */
-    uint8_t bfh[14];
-    std::memset(bfh, 0, sizeof(bfh));
-    bfh[0] = 'B'; bfh[1] = 'M';
-    bfh[2] = (uint8_t)(file_size);       bfh[3] = (uint8_t)(file_size >> 8);
-    bfh[4] = (uint8_t)(file_size >> 16);  bfh[5] = (uint8_t)(file_size >> 24);
-    bfh[10] = (uint8_t)(pixel_offset);    bfh[11] = (uint8_t)(pixel_offset >> 8);
-    bfh[12] = (uint8_t)(pixel_offset >> 16); bfh[13] = (uint8_t)(pixel_offset >> 24);
-    f_write(&f, bfh, 14, &bw);
+    /* Combined BMP file header (14) + DIB header (40) = 54 bytes on stack */
+    uint8_t hdr[54];
+    std::memset(hdr, 0, sizeof(hdr));
+    /* File header */
+    hdr[0] = 'B'; hdr[1] = 'M';
+    hdr[2] = (uint8_t)(file_size);        hdr[3] = (uint8_t)(file_size >> 8);
+    hdr[4] = (uint8_t)(file_size >> 16);   hdr[5] = (uint8_t)(file_size >> 24);
+    hdr[10] = (uint8_t)(pixel_offset);     hdr[11] = (uint8_t)(pixel_offset >> 8);
+    hdr[12] = (uint8_t)(pixel_offset >> 16); hdr[13] = (uint8_t)(pixel_offset >> 24);
+    /* DIB header */
+    hdr[14] = 40;
+    hdr[18] = (uint8_t)(W);       hdr[19] = (uint8_t)(W >> 8);
+    hdr[22] = (uint8_t)(H);       hdr[23] = (uint8_t)(H >> 8);
+    hdr[26] = 1;  /* planes */
+    hdr[28] = 8;  /* bpp */
+    f_write(&f, hdr, 54, &bw);
 
-    /* BITMAPINFOHEADER (40 bytes) */
-    uint8_t dib[40];
-    std::memset(dib, 0, sizeof(dib));
-    dib[0] = 40; /* header size */
-    dib[4]  = (uint8_t)(W);        dib[5]  = (uint8_t)(W >> 8);
-    dib[8]  = (uint8_t)(H);        dib[9]  = (uint8_t)(H >> 8);
-    dib[12] = 1;  /* planes */
-    dib[14] = 8;  /* bits per pixel */
-    /* compression = 0 (BI_RGB), image size can be 0 for uncompressed */
-    dib[32] = 0;  /* colors used = 0 (all 256) */
-    f_write(&f, dib, 40, &bw);
-
-    /* Palette: 256 entries × 4 bytes (BGRA) */
-    uint8_t pal[256 * 4];
-    std::memset(pal, 0, sizeof(pal));
-    /* First 32 entries from CPC hardware palette */
-    for (int i = 0; i < 32; i++) {
-        uint32_t rgb = cpc_rgb_table[i];
-        pal[i * 4 + 0] = (uint8_t)(rgb & 0xFF);         /* Blue */
-        pal[i * 4 + 1] = (uint8_t)((rgb >> 8) & 0xFF);  /* Green */
-        pal[i * 4 + 2] = (uint8_t)((rgb >> 16) & 0xFF); /* Red */
+    /* Palette: write 32 entries at a time using a 128-byte stack buffer.
+     * Total = 256 entries × 4 bytes = 1024 bytes, written in 8 chunks. */
+    uint8_t pal4[128];  /* 32 entries × 4 bytes */
+    for (int chunk = 0; chunk < 8; chunk++) {
+        std::memset(pal4, 0, sizeof(pal4));
+        int base = chunk * 32;
+        for (int i = 0; i < 32 && (base + i) < 256; i++) {
+            int idx = base + i;
+            if (idx < 32) {
+                uint32_t rgb = cpc_rgb_table[idx];
+                pal4[i * 4 + 0] = (uint8_t)(rgb & 0xFF);
+                pal4[i * 4 + 1] = (uint8_t)((rgb >> 8) & 0xFF);
+                pal4[i * 4 + 2] = (uint8_t)((rgb >> 16) & 0xFF);
+            } else if (idx == 255) {
+                /* black for border blanking — already zeroed */
+            }
+        }
+        f_write(&f, pal4, 128, &bw);
     }
-    /* Index 255 = black (used for border blanking) */
-    pal[255 * 4 + 0] = 0; pal[255 * 4 + 1] = 0; pal[255 * 4 + 2] = 0;
-    f_write(&f, pal, palette_size, &bw);
 
     /* Pixel data — bottom-to-top row order */
     uint8_t row_pad[4] = {0, 0, 0, 0};
