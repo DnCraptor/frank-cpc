@@ -1238,18 +1238,32 @@ int cpc_screenshot_save(void) {
     f_mkdir("/cpc");
     f_mkdir("/cpc/screenshot");
 
-    /* Use static FIL to avoid ~600 bytes on stack (Pico has limited stack) */
+    /* Use static FIL/DIR to avoid ~600 bytes on stack (Pico limited stack).
+     * FatFS with LFN=3 does heap allocation per f_open/f_stat call (~1KB),
+     * so we scan the directory once to find the highest existing number. */
     static FIL f;
+    static DIR dir;
     static FILINFO fi;
 
-    /* Find next available filename */
-    char path[40];
-    int num;
-    for (num = 1; num <= 9999; num++) {
-        snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", num);
-        if (f_stat(path, &fi) != FR_OK) break;
+    int max_num = 0;
+    if (f_opendir(&dir, "/cpc/screenshot") == FR_OK) {
+        while (f_readdir(&dir, &fi) == FR_OK && fi.fname[0]) {
+            /* Match CPC_NNNN.BMP pattern */
+            if (fi.fname[0] == 'C' && fi.fname[1] == 'P' && fi.fname[2] == 'C' && fi.fname[3] == '_') {
+                int n = 0;
+                for (int i = 4; i < 8 && fi.fname[i] >= '0' && fi.fname[i] <= '9'; i++)
+                    n = n * 10 + (fi.fname[i] - '0');
+                if (n > max_num) max_num = n;
+            }
+        }
+        f_closedir(&dir);
     }
+
+    int num = max_num + 1;
     if (num > 9999) return -1;
+
+    char path[40];
+    snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", num);
 
     const int W = CPC_FB_WIDTH;   /* 320 */
     const int H = CPC_FB_HEIGHT;  /* 240 */
