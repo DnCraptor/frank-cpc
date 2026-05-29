@@ -73,6 +73,8 @@ t_drive *driveB_p = nullptr;
 /* CRTC globals */
 dword dwXScale = 1;
 extern int crtc_type;
+extern dword *ModeMaps[4];
+extern dword *ModeMap;
 
 /* Debug stubs (referenced by crtc.cpp and fdc.cpp) */
 dword dwDebugFlag = 0;
@@ -871,6 +873,13 @@ int cpc_snapshot_save(const char *path) {
     sh.crtc_raster_count = (unsigned char)CRTC.raster_count;
     sh.crtc_hsw_count = (unsigned char)CRTC.hsw_count;
     sh.crtc_vsw_count = (unsigned char)CRTC.vsw_count;
+    sh.crtc_char_count[0] = (unsigned char)(CRTC.char_count & 0xFF);
+    sh.crtc_char_count[1] = (unsigned char)((CRTC.char_count >> 8) & 0xFF);
+    {
+        unsigned int a = CRTC.requested_addr;
+        sh.crtc_addr[0] = (unsigned char)(a & 0xFF);
+        sh.crtc_addr[1] = (unsigned char)((a >> 8) & 0xFF);
+    }
     {
         unsigned int f = 0;
         if (CRTC.flag_invsync) f |= VS_flag;
@@ -933,6 +942,11 @@ int cpc_snapshot_load(const char *path) {
     if (ram_size > (dword)CPC.ram_size) ram_size = CPC.ram_size;
     f_read(&f, pbRAM, ram_size * 1024, &br);
     f_close(&f);
+    if (br < ram_size * 1024) {
+        printf("cpc_adapter: snapshot RAM truncated (%lu/%lu bytes)\n",
+               (unsigned long)br, (unsigned long)(ram_size * 1024));
+        return -1;
+    }
 
     /* Restore Z80 registers */
     z80.AF.b.l = sh.AF[0]; z80.AF.b.h = sh.AF[1];
@@ -966,12 +980,34 @@ int cpc_snapshot_load(const char *path) {
     GateArray.scr_mode = sh.scr_modes[0] & 3;
     GateArray.requested_scr_mode = GateArray.scr_mode;
     video_set_palette();
+    crtc_update_palette_cache();
+    ModeMap = ModeMaps[GateArray.scr_mode];
 
     /* Restore CRTC */
     CRTC.reg_select = sh.crtc_reg_select;
     std::memcpy(CRTC.registers, sh.crtc_registers, 18);
     crtc_type = (sh.crtc_type <= 4) ? sh.crtc_type : 0;
     crtc_update_r3();
+
+    /* Restore CRTC counters and flags */
+    CRTC.line_count = sh.crtc_line_count;
+    CRTC.raster_count = sh.crtc_raster_count;
+    CRTC.hsw_count = sh.crtc_hsw_count;
+    CRTC.vsw_count = sh.crtc_vsw_count;
+    CRTC.char_count = sh.crtc_char_count[0] | ((unsigned int)sh.crtc_char_count[1] << 8);
+    {
+        unsigned int f = sh.crtc_flags[0] | ((unsigned int)sh.crtc_flags[1] << 8);
+        CRTC.flag_invsync = (f & VS_flag) ? 1 : 0;
+    }
+
+    /* Recalculate CRTC screen address from registers 12/13 */
+    CRTC.requested_addr = CRTC.registers[13] + (CRTC.registers[12] << 8);
+    CRTC.addr = CRTC.requested_addr;
+    CRTC.next_addr = CRTC.requested_addr;
+
+    /* Recalculate CRTC match flags from restored counters */
+    CRTC.r7match = (CRTC.line_count == CRTC.registers[7]) ? 1 : 0;
+    CRTC.r9match = (CRTC.raster_count == CRTC.registers[9]) ? 1 : 0;
 
     /* Restore PPI */
     PPI.portA = sh.ppi_A;
