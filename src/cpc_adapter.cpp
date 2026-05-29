@@ -35,6 +35,9 @@ extern "C" {
 #include "Pico/cpc_settings.h"
 }
 
+/* Live palette RGB values maintained by ASIC/Gate Array rendering */
+extern uint32_t asic_dynamic_rgb[256];
+
 /* ------------------------------------------------------------------ */
 /* caprice32 global state — z80 is defined in z80.cpp                 */
 /* ------------------------------------------------------------------ */
@@ -459,9 +462,11 @@ static void render_frame_to_fb(void) {
 static void setup_hw_palette(void) {
     for (int i = 0; i < 32; i++) {
         graphics_set_palette((uint8_t)i, cpc_rgb_table[i]);
+        asic_dynamic_rgb[i] = cpc_rgb_table[i];
     }
     /* Reserve index 255 as guaranteed black for border blanking */
     graphics_set_palette(255, 0x000000);
+    asic_dynamic_rgb[255] = 0x000000;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1048,16 +1053,17 @@ void cpc_apply_green_monitor(int green) {
     std::memcpy(rgb, cpc_rgb_table, sizeof(rgb));
     if (green) {
         for (int i = 0; i < 32; i++) {
-            /* Convert RGB to luminance, output as green only */
             unsigned r = (rgb[i] >> 16) & 0xFF;
             unsigned g = (rgb[i] >>  8) & 0xFF;
             unsigned b = (rgb[i]      ) & 0xFF;
             unsigned lum = (r * 77 + g * 150 + b * 29) >> 8;
-            rgb[i] = lum << 8; /* green channel only */
+            rgb[i] = lum << 8;
         }
     }
-    for (int i = 0; i < 32; i++)
+    for (int i = 0; i < 32; i++) {
         graphics_set_palette((uint8_t)i, rgb[i]);
+        asic_dynamic_rgb[i] = rgb[i];
+    }
 }
 
 void cpc_get_palette_rgb(uint32_t *rgb32) {
@@ -1232,12 +1238,31 @@ int CreateBlankDsk(const char *path) {
 /* Screenshot: save framebuffer as 8bpp BMP to SD card                */
 /* ------------------------------------------------------------------ */
 
-/* Persistent screenshot counter — increments each call, survives across frames
- * but resets on reboot.  Avoids any FatFS directory scanning. */
-static int screenshot_counter = 0;
+/* Persistent screenshot counter — set once on first call by scanning
+ * the screenshot directory, then incremented on each subsequent call. */
+static int screenshot_counter = -1;
 
 int cpc_screenshot_save(void) {
     if (!scanline_render_target) return -1;
+
+    /* On first call, scan directory to find highest existing number */
+    if (screenshot_counter < 0) {
+        screenshot_counter = 0;
+        DIR dir;
+        FILINFO fi;
+        if (f_opendir(&dir, "/cpc/screenshot") == FR_OK) {
+            while (f_readdir(&dir, &fi) == FR_OK && fi.fname[0]) {
+                if (fi.fname[0] == 'C' && fi.fname[1] == 'P' &&
+                    fi.fname[2] == 'C' && fi.fname[3] == '_') {
+                    int n = 0;
+                    for (int j = 4; j < 8 && fi.fname[j] >= '0' && fi.fname[j] <= '9'; j++)
+                        n = n * 10 + (fi.fname[j] - '0');
+                    if (n > screenshot_counter) screenshot_counter = n;
+                }
+            }
+            f_closedir(&dir);
+        }
+    }
 
     screenshot_counter++;
     if (screenshot_counter > 9999) screenshot_counter = 1;
@@ -1246,7 +1271,6 @@ int cpc_screenshot_save(void) {
     snprintf(path, sizeof(path), "/cpc/screenshot/CPC_%04d.BMP", screenshot_counter);
 
     FIL f;
-    /* Ensure directory exists — ignore errors (may already exist) */
     f_mkdir("/cpc/screenshot");
 
     const int W = CPC_FB_WIDTH;   /* 320 */
@@ -1264,13 +1288,11 @@ int cpc_screenshot_save(void) {
     /* Combined BMP file header (14) + DIB header (40) = 54 bytes on stack */
     uint8_t hdr[54];
     std::memset(hdr, 0, sizeof(hdr));
-    /* File header */
     hdr[0] = 'B'; hdr[1] = 'M';
     hdr[2] = (uint8_t)(file_size);        hdr[3] = (uint8_t)(file_size >> 8);
     hdr[4] = (uint8_t)(file_size >> 16);   hdr[5] = (uint8_t)(file_size >> 24);
     hdr[10] = (uint8_t)(pixel_offset);     hdr[11] = (uint8_t)(pixel_offset >> 8);
     hdr[12] = (uint8_t)(pixel_offset >> 16); hdr[13] = (uint8_t)(pixel_offset >> 24);
-    /* DIB header */
     hdr[14] = 40;
     hdr[18] = (uint8_t)(W);       hdr[19] = (uint8_t)(W >> 8);
     hdr[22] = (uint8_t)(H);       hdr[23] = (uint8_t)(H >> 8);
@@ -1278,22 +1300,19 @@ int cpc_screenshot_save(void) {
     hdr[28] = 8;  /* bpp */
     f_write(&f, hdr, 54, &bw);
 
-    /* Palette: write 32 entries at a time using a 128-byte stack buffer.
-     * Total = 256 entries × 4 bytes = 1024 bytes, written in 8 chunks. */
-    uint8_t pal4[128];  /* 32 entries × 4 bytes */
+    /* Palette: use the live dynamic_rgb[] which holds the actual RGB888
+     * for every palette slot (both standard CPC and CPC Plus).
+     * Write 32 entries at a time (128-byte chunks). */
+    uint8_t pal4[128];
     for (int chunk = 0; chunk < 8; chunk++) {
         std::memset(pal4, 0, sizeof(pal4));
         int base = chunk * 32;
-        for (int i = 0; i < 32 && (base + i) < 256; i++) {
+        for (int i = 0; i < 32; i++) {
             int idx = base + i;
-            if (idx < 32) {
-                uint32_t rgb = cpc_rgb_table[idx];
-                pal4[i * 4 + 0] = (uint8_t)(rgb & 0xFF);
-                pal4[i * 4 + 1] = (uint8_t)((rgb >> 8) & 0xFF);
-                pal4[i * 4 + 2] = (uint8_t)((rgb >> 16) & 0xFF);
-            } else if (idx == 255) {
-                /* black for border blanking — already zeroed */
-            }
+            uint32_t rgb = asic_dynamic_rgb[idx];
+            pal4[i * 4 + 0] = (uint8_t)(rgb & 0xFF);         /* B */
+            pal4[i * 4 + 1] = (uint8_t)((rgb >> 8) & 0xFF);  /* G */
+            pal4[i * 4 + 2] = (uint8_t)((rgb >> 16) & 0xFF); /* R */
         }
         f_write(&f, pal4, 128, &bw);
     }

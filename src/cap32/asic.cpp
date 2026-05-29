@@ -56,7 +56,7 @@ uint32_t asic_rgb[32]; /* current RGB888 for each ASIC palette entry */
  * Double buffering: even frames use slots 32-143, odd frames use 144-254.
  * This prevents race conditions with the DVI output, which may still
  * be displaying the previous frame's pixels referencing old slot indices. */
-static uint32_t dynamic_rgb[256];  /* RGB for each allocated slot */
+uint32_t asic_dynamic_rgb[256];  /* RGB for each allocated slot */
 static int dyn_next = 32;          /* next free dynamic slot */
 static int dyn_max = 144;          /* upper limit for current frame's slots */
 static int asic_frame_parity = 0;  /* alternates 0/1 each frame */
@@ -107,7 +107,7 @@ static void asic_update_colour(int colour) {
 
    if (dyn_next < dyn_max) {
       int idx = dyn_next++;
-      dynamic_rgb[idx] = rgb;
+      asic_dynamic_rgb[idx] = rgb;
       graphics_set_palette((uint8_t)idx, rgb);  /* program immediately — avoids race with DVI */
       GateArray.palette[colour] = idx;
       palette_byte[colour] = (byte)idx;
@@ -118,14 +118,14 @@ static void asic_update_colour(int colour) {
        * Only this pen's previous scanlines lose their color;
        * other pens' dynamic slots are preserved. */
       int idx = pen_last_slot[colour];
-      dynamic_rgb[idx] = rgb;
+      asic_dynamic_rgb[idx] = rgb;
       graphics_set_palette((uint8_t)idx, rgb);
       GateArray.palette[colour] = idx;
       palette_byte[colour] = (byte)idx;
       active_halfwidth_lut = nullptr;
    } else {
       /* No dynamic slot ever allocated for this pen — use base entry */
-      dynamic_rgb[colour] = rgb;
+      asic_dynamic_rgb[colour] = rgb;
       graphics_set_palette((uint8_t)colour, rgb);
       GateArray.palette[colour] = colour;
       palette_byte[colour] = (byte)colour;
