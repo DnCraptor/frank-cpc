@@ -37,8 +37,8 @@
 #define SDCARD_PIN_SPI0_CS   43
 
 /* ---- PS/2 keyboard ---- */
-#define PS2_PIN_CLK   14
-#define PS2_PIN_DATA  15
+#define PS2_PIN_CLK   2
+#define PS2_PIN_DATA  3
 /* No PS/2 mouse on Z0 */
 
 /* ---- NES/SNES pad ---- */

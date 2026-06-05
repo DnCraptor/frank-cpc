@@ -516,7 +516,11 @@ int main(void) {
     /* HDMI_PIO_AUDIO: VGA autodetect, then HDMI or VGA init. */
     {
         int link = testPins(HDMI_BASE_PIN, HDMI_BASE_PIN + 1);
+#if defined(PLATFORM_Z0)
+        SELECT_VGA = false; // TODO: (link == 0x1F);
+#else
         SELECT_VGA = (link == 0) || (link == 0x1F);
+#endif
         printf("Video: HDMI_PIO_AUDIO link=0x%02X -> %s\n", (unsigned)link, SELECT_VGA ? "VGA" : "HDMI");
     }
     graphics_init(g_out_HDMI);
@@ -541,7 +545,11 @@ int main(void) {
     /* HDMI_PIO: original PIO HDMI + I2S audio path. */
     {
         int link = testPins(HDMI_BASE_PIN, HDMI_BASE_PIN + 1);
+#if defined(PLATFORM_Z0)
+        SELECT_VGA = false; // TODO: (link == 0x1F);
+#else
         SELECT_VGA = (link == 0) || (link == 0x1F);
+#endif
         printf("Video: link=0x%02X -> %s\n", (unsigned)link, SELECT_VGA ? "VGA" : "HDMI");
     }
     graphics_init(g_out_HDMI);
