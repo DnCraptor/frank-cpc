@@ -1,3 +1,17 @@
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.2.0)
+set(toolchainVersion 14_2_Rel1)
+set(picotoolVersion 2.2.0-a4)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
 #
 # frank-cpc — Amstrad CPC for RP2350
 #
@@ -57,16 +71,16 @@ else()
     set(TV_PIN 12)
 endif()
 
-set(CPU_SPEED  "504" CACHE STRING "CPU clock in MHz")
+set(CPU_SPEED  "252" CACHE STRING "CPU clock in MHz")
 set(PSRAM_SPEED "100" CACHE STRING "PSRAM max frequency in MHz")
 set(FLASH_SPEED "66"  CACHE STRING "Flash target max frequency in MHz")
 
 if(CPU_SPEED GREATER_EQUAL 504)
-    set(CPU_VOLTAGE "VREG_VOLTAGE_1_65")
+    set(CPU_VOLTAGE "VREG_VOLTAGE_1_60")
 elseif(CPU_SPEED GREATER_EQUAL 300)
     set(CPU_VOLTAGE "VREG_VOLTAGE_1_60")
 else()
-    set(CPU_VOLTAGE "VREG_VOLTAGE_1_50")
+    set(CPU_VOLTAGE "VREG_VOLTAGE_1_30")
 endif()
 
 # Video output selection
@@ -519,3 +533,4 @@ else()
 endif()
 
 pico_add_extra_outputs(frank-cpc)
+target_link_options(frank-cpc PRIVATE -Xlinker --print-memory-usage --data-sections --function-sections)
