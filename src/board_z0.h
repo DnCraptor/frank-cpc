@@ -55,6 +55,7 @@
 #define PWM_PIN1 11
 
 /* ---- PSRAM (built-in on GP47) ---- */
+#define BUTTER_PSRAM_GPIO 47
 #define PSRAM_CS_PIN_RP2350A 47
 #define PSRAM_CS_PIN_RP2350B 47
 

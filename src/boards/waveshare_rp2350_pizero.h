@@ -79,9 +79,4 @@ pico_board_cmake_set_default(PICO_RP2350_A2_SUPPORTED, 1)
 #define PICO_RP2350_A2_SUPPORTED 1
 #endif
 
-// --- LED ---
-#ifndef PICO_DEFAULT_LED_PIN
-#define PICO_DEFAULT_LED_PIN 25
-#endif
-
 #endif

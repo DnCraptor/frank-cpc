@@ -428,7 +428,13 @@ int main(void) {
 
     printf("\n========================================\n");
     printf("  frank-cpc — Amstrad CPC for RP2350\n");
+#if defined(PLATFORM_Z0)
+    printf("  version %s  board Z0\n", FRANK_CPC_VERSION);
+#elif defined(PLATFORM_M1)
+    printf("  version %s  board M1\n", FRANK_CPC_VERSION);
+#else
     printf("  version %s  board M2\n", FRANK_CPC_VERSION);
+#endif
     printf("  cpu=%lu MHz\n", clock_get_hz(clk_sys) / 1000000u);
     printf("========================================\n");
 
