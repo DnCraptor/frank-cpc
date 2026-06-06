@@ -46,6 +46,7 @@
 
 #include "pwm_audio.h"
 #include "cpc_settings.h"
+#include "ui_draw.h"
 
 /* Lazy-init PWM audio on first use. */
 static bool s_pwm_audio_inited = false;
@@ -362,6 +363,47 @@ void __time_critical_func(render_core)(void) {
 
 extern void cpc_pico_main(void);
 
+static void boot_error_screen(bool psram_ok, FRESULT sd_result) {
+    ui_draw_install_palette();
+    graphics_set_buffer(SCREEN[0]);
+    memset(SCREEN[0], 0, FB_W * CPC_SCREEN_LINES);
+
+    const int x = 18;
+    int y = 24;
+    ui_draw_string(SCREEN[0], FB_W, x, y, "frank-cpc startup stopped", UI_COLOR_FG);
+    y += 18;
+
+    if (!psram_ok) {
+        ui_draw_string(SCREEN[0], FB_W, x, y, "PSRAM: not detected", UI_COLOR_ACCENT_FG);
+        y += 10;
+    } else {
+        ui_draw_string(SCREEN[0], FB_W, x, y, "PSRAM: OK", UI_COLOR_FG);
+        y += 10;
+    }
+
+    if (sd_result != FR_OK) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "SD card: f_mount failed (%d)", (int)sd_result);
+        ui_draw_string(SCREEN[0], FB_W, x, y, buf, UI_COLOR_ACCENT_FG);
+        y += 10;
+    } else {
+        ui_draw_string(SCREEN[0], FB_W, x, y, "SD card: OK", UI_COLOR_FG);
+        y += 10;
+    }
+
+    y += 8;
+    ui_draw_string(SCREEN[0], FB_W, x, y, "Emulator was not started.", UI_COLOR_FG);
+    y += 10;
+    ui_draw_string(SCREEN[0], FB_W, x, y, "Install PSRAM and SD card, then reboot.", UI_COLOR_FG);
+
+    while (true) tight_loop_contents();
+}
+
+static void boot_halt_if_required(bool psram_ok, FRESULT sd_result) {
+    if (psram_ok && sd_result == FR_OK) return;
+    boot_error_screen(psram_ok, sd_result);
+}
+
 int main(void) {
 #if CPU_CLOCK_MHZ > 252
     vreg_disable_voltage_limit();
@@ -386,7 +428,13 @@ int main(void) {
 
     printf("\n========================================\n");
     printf("  frank-cpc — Amstrad CPC for RP2350\n");
+#if defined(PLATFORM_Z0)
+    printf("  version %s  board Z0\n", FRANK_CPC_VERSION);
+#elif defined(PLATFORM_M1)
+    printf("  version %s  board M1\n", FRANK_CPC_VERSION);
+#else
     printf("  version %s  board M2\n", FRANK_CPC_VERSION);
+#endif
     printf("  cpu=%lu MHz\n", clock_get_hz(clk_sys) / 1000000u);
     printf("========================================\n");
 
@@ -400,9 +448,13 @@ int main(void) {
 #endif
 
     uint psram_pin = get_psram_pin();
-    psram_init(psram_pin);
-    psram_reset();
-    printf("PSRAM initialized\n");
+    bool psram_ok = psram_init(psram_pin);
+    if (psram_ok) {
+        psram_reset();
+        printf("PSRAM initialized\n");
+    } else {
+        printf("WARNING: PSRAM not detected\n");
+    }
 
     memset(screen_mem, 0, sizeof(screen_mem));
 
@@ -454,6 +506,10 @@ int main(void) {
     usbhid_wrapper_init();
     printf("USB HID host initialized\n");
 
+#if defined(VGA_HSTX) || defined(VIDEO_COMPOSITE)
+    boot_halt_if_required(psram_ok, fr);
+#endif
+
 #if defined(VGA_HSTX)
     /* VGA_HSTX: DispHSTX already claimed Core 1. I2S audio on Core 0. */
     i2s_audio_init_core0();
@@ -466,7 +522,11 @@ int main(void) {
     /* HDMI_PIO_AUDIO: VGA autodetect, then HDMI or VGA init. */
     {
         int link = testPins(HDMI_BASE_PIN, HDMI_BASE_PIN + 1);
+#if defined(PLATFORM_Z0)
+        SELECT_VGA = false; // TODO: (link == 0x1F);
+#else
         SELECT_VGA = (link == 0) || (link == 0x1F);
+#endif
         printf("Video: HDMI_PIO_AUDIO link=0x%02X -> %s\n", (unsigned)link, SELECT_VGA ? "VGA" : "HDMI");
     }
     graphics_init(g_out_HDMI);
@@ -475,6 +535,7 @@ int main(void) {
     graphics_set_shift((320 - FB_W) / 2, 0);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
     printf("Video initialized (%dx%d)\n", FB_W, CPC_SCREEN_LINES);
+    boot_halt_if_required(psram_ok, fr);
 
     if (!SELECT_VGA) {
         multicore_launch_core1(frank_hdmi_run_core1);
@@ -490,7 +551,11 @@ int main(void) {
     /* HDMI_PIO: original PIO HDMI + I2S audio path. */
     {
         int link = testPins(HDMI_BASE_PIN, HDMI_BASE_PIN + 1);
+#if defined(PLATFORM_Z0)
+        SELECT_VGA = false; // TODO: (link == 0x1F);
+#else
         SELECT_VGA = (link == 0) || (link == 0x1F);
+#endif
         printf("Video: link=0x%02X -> %s\n", (unsigned)link, SELECT_VGA ? "VGA" : "HDMI");
     }
     graphics_init(g_out_HDMI);
@@ -499,6 +564,7 @@ int main(void) {
     graphics_set_shift((320 - FB_W) / 2, 0);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
     printf("Video initialized (%dx%d)\n", FB_W, CPC_SCREEN_LINES);
+    boot_halt_if_required(psram_ok, fr);
 
     multicore_launch_core1(render_core);
     while (!core1_ready) tight_loop_contents();

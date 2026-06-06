@@ -11,14 +11,75 @@
 #include "hardware/structs/xip_ctrl.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
+#include "pico/multicore.h"
 #include "pico/stdlib.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 // PSRAM max frequency from build config (default 133 MHz)
 #ifndef PSRAM_MAX_FREQ_MHZ
 #define PSRAM_MAX_FREQ_MHZ 133
 #endif
 
-void __no_inline_not_in_flash_func(psram_init)(uint cs_pin) {
+#define PSRAM_BASE       0x11000000u
+#define PSRAM_NOCACHE    0x15000000u
+#define PSRAM_PROBE_SIZE (8u * 1024u * 1024u)
+
+static bool s_psram_available = false;
+
+bool psram_is_available(void) {
+    return s_psram_available;
+}
+
+static bool __no_inline_not_in_flash_func(psram_probe_memory)(void) {
+    static const uint32_t offsets[] = {
+        0u,
+        4u,
+        1024u * 1024u,
+        4u * 1024u * 1024u,
+        PSRAM_PROBE_SIZE - 4u,
+    };
+    volatile uint32_t *base = (volatile uint32_t *)(uintptr_t)PSRAM_NOCACHE;
+    uint32_t saved[sizeof(offsets) / sizeof(offsets[0])];
+
+    for (unsigned i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+        saved[i] = base[offsets[i] / 4u];
+    }
+
+    for (unsigned i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+        uint32_t pattern = 0xA55A0000u ^ (offsets[i] * 2654435761u) ^ i;
+        base[offsets[i] / 4u] = pattern;
+        __dmb();
+        if (base[offsets[i] / 4u] != pattern) {
+            for (unsigned j = 0; j < sizeof(offsets) / sizeof(offsets[0]); ++j) {
+                base[offsets[j] / 4u] = saved[j];
+            }
+            __dmb();
+            return false;
+        }
+    }
+
+    for (unsigned i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+        uint32_t pattern = 0x5AA50000u ^ (~offsets[i]) ^ (i << 16);
+        base[offsets[i] / 4u] = pattern;
+        __dmb();
+        if (base[offsets[i] / 4u] != pattern) {
+            for (unsigned j = 0; j < sizeof(offsets) / sizeof(offsets[0]); ++j) {
+                base[offsets[j] / 4u] = saved[j];
+            }
+            __dmb();
+            return false;
+        }
+    }
+
+    for (unsigned i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+        base[offsets[i] / 4u] = saved[i];
+    }
+    __dmb();
+    return true;
+}
+
+bool __no_inline_not_in_flash_func(psram_init)(uint cs_pin) {
     const int clock_hz = clock_get_hz(clk_sys); 
 
     gpio_set_function(cs_pin, GPIO_FUNC_XIP_CS1);
@@ -83,4 +144,10 @@ void __no_inline_not_in_flash_func(psram_init)(uint cs_pin) {
     qmi_hw->direct_csr = 0;
     
     hw_set_bits(&xip_ctrl_hw->ctrl, XIP_CTRL_WRITABLE_M1_BITS);
+
+    s_psram_available = psram_probe_memory();
+    if (!s_psram_available) {
+        hw_clear_bits(&xip_ctrl_hw->ctrl, XIP_CTRL_WRITABLE_M1_BITS);
+    }
+    return s_psram_available;
 }

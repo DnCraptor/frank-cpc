@@ -1,3 +1,17 @@
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.2.0)
+set(toolchainVersion 14_2_Rel1)
+set(picotoolVersion 2.2.0)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
 #
 # frank-cpc — Amstrad CPC for RP2350
 #
@@ -9,19 +23,32 @@
 cmake_minimum_required(VERSION 3.13)
 
 # Platform selection: m1, m2, z0
-set(PLATFORM "m2" CACHE STRING "Target platform: m1, m2, z0")
+set(PLATFORM "z0" CACHE STRING "Target platform: m1, m2, z0")
 set_property(CACHE PLATFORM PROPERTY STRINGS m1 m2 z0)
 
 if(NOT PLATFORM STREQUAL "m1" AND NOT PLATFORM STREQUAL "m2" AND NOT PLATFORM STREQUAL "z0")
     message(FATAL_ERROR "Unknown PLATFORM '${PLATFORM}' — must be m1, m2, or z0")
 endif()
 
+set(CPU_SPEED "504")
+set(PSRAM_SPEED "100" CACHE STRING "PSRAM max frequency in MHz")
+set(FLASH_SPEED "66"  CACHE STRING "Flash target max frequency in MHz")
+
 # Z0 (Waveshare RP2350-PiZero) requires a custom board definition
 if(PLATFORM STREQUAL "z0")
     set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/src/boards CACHE PATH "" FORCE)
     set(PICO_BOARD "waveshare_rp2350_pizero" CACHE STRING "Board type" FORCE)
+    set(PICO_PLATFORM "rp2350-arm-s" CACHE STRING "Pico platform" FORCE)
+    set(CPU_SPEED "252")
 else()
     set(PICO_BOARD "pico2" CACHE STRING "Board type" FORCE)
+    set(PICO_PLATFORM "rp2350-arm-s" CACHE STRING "Pico platform" FORCE)
+endif()
+
+if(CPU_SPEED GREATER_EQUAL 300)
+    set(CPU_VOLTAGE "VREG_VOLTAGE_1_60")
+else()
+    set(CPU_VOLTAGE "VREG_VOLTAGE_1_30")
 endif()
 
 # Per-platform compile definition and pin configuration
@@ -55,18 +82,6 @@ else()
     set(HDMI_PIN 12)
     set(VGA_PIN 12)
     set(TV_PIN 12)
-endif()
-
-set(CPU_SPEED  "504" CACHE STRING "CPU clock in MHz")
-set(PSRAM_SPEED "100" CACHE STRING "PSRAM max frequency in MHz")
-set(FLASH_SPEED "66"  CACHE STRING "Flash target max frequency in MHz")
-
-if(CPU_SPEED GREATER_EQUAL 504)
-    set(CPU_VOLTAGE "VREG_VOLTAGE_1_65")
-elseif(CPU_SPEED GREATER_EQUAL 300)
-    set(CPU_VOLTAGE "VREG_VOLTAGE_1_60")
-else()
-    set(CPU_VOLTAGE "VREG_VOLTAGE_1_50")
 endif()
 
 # Video output selection
@@ -519,3 +534,4 @@ else()
 endif()
 
 pico_add_extra_outputs(frank-cpc)
+target_link_options(frank-cpc PRIVATE -Xlinker --print-memory-usage --data-sections --function-sections)

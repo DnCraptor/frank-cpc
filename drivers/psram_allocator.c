@@ -24,6 +24,7 @@
 
 #include "psram_allocator.h"
 #include "psram_dlmalloc.h"
+#include "psram_init.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -64,6 +65,7 @@ static int is_psram(const void *p) {
 
 static void ensure_init(void) {
     if (g_msp) return;
+    if (!psram_is_available()) return;
     void  *base = psram_start + SCRATCH_SIZE;
     size_t size = PSRAM_SIZE  - SCRATCH_SIZE;
     g_msp = create_mspace_with_base(base, size, 0);
@@ -84,13 +86,16 @@ void *psram_malloc(size_t size) {
 }
 
 void *psram_realloc(void *ptr, size_t size) {
+    if (!ptr) {
+        ensure_init();
+        return g_msp ? mspace_malloc(g_msp, size) : NULL;
+    }
+    if (size == 0)  { psram_free(ptr); return NULL; }
+    if (!is_psram(ptr)) return realloc(ptr, size);
+
     ensure_init();
     if (!g_msp) return NULL;
-    if (!ptr)       return mspace_malloc(g_msp, size);
-    if (size == 0)  { psram_free(ptr); return NULL; }
-    if (is_psram(ptr)) return mspace_realloc(g_msp, ptr, size);
-    /* Pointer came from the C library heap — fall back. */
-    return realloc(ptr, size);
+    return mspace_realloc(g_msp, ptr, size);
 }
 
 void psram_free(void *ptr) {
@@ -103,14 +108,15 @@ void psram_free(void *ptr) {
 }
 
 size_t psram_usable_size(void *ptr) {
-    return ptr ? mspace_usable_size(ptr) : 0;
+    if (!ptr || !is_psram(ptr) || !g_msp) return 0;
+    return mspace_usable_size(ptr);
 }
 
 void psram_reset(void) {
     /* Throw the whole mspace away and start over. Used on deep reset
      * paths — any live dlmalloc blocks are leaked. */
     g_msp = NULL;
-    ensure_init();
+    if (psram_is_available()) ensure_init();
 }
 
 /* ---- compat shims kept so existing code keeps building ------- */
@@ -126,14 +132,17 @@ void psram_restore_session(void) { }
 void psram_print_stats(void)     { }
 
 void *psram_get_scratch_1(size_t size) {
+    if (!psram_is_available()) return NULL;
     if (size > 128u * 1024u) return NULL;
     return psram_start;
 }
 void *psram_get_scratch_2(size_t size) {
+    if (!psram_is_available()) return NULL;
     if (size > 128u * 1024u) return NULL;
     return psram_start + 128u * 1024u;
 }
 void *psram_get_file_buffer(size_t size) {
+    if (!psram_is_available()) return NULL;
     if (size > 256u * 1024u) return NULL;
     return psram_start + 256u * 1024u;
 }

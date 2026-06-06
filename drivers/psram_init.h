@@ -10,7 +10,9 @@
 #define PSRAM_INIT_H
 
 #include "pico/stdlib.h"
+#include <stdbool.h>
 
-void psram_init(uint cs_pin);
+bool psram_init(uint cs_pin);
+bool psram_is_available(void);
 
 #endif
