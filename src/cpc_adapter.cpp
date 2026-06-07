@@ -489,36 +489,38 @@ static void flush_audio(void) {
      * Uses a slow-tracking DC estimator: dc += (x - dc) >> 8
      * which gives a ~17 Hz cutoff at 44100 Hz. */
     static int32_t dc_l = 0, dc_r = 0;
-#ifdef HDMI_PIO_AUDIO
-    /* HDMI: 3-pole IIR LPF at alpha=1/2 to compensate for the lack of
-     * analog RC filtering on the digital HDMI output path. */
+    /* 1-pole LPF (all paths): mimics the real CPC analog RC output filter.
+     * alpha=3/4 → fc ≈ 9.7 kHz — gentle roll-off, removes harshness
+     * without muffling. HDMI gets an additional 2 poles for more filtering. */
     static int32_t lp1_l = 0, lp1_r = 0;
+#ifdef HDMI_PIO_AUDIO
     static int32_t lp2_l = 0, lp2_r = 0;
     static int32_t lp3_l = 0, lp3_r = 0;
 #endif
     for (int i = 0; i < frames; ++i) {
-        /* Step 1: reduce each PSG channel's contribution by 20% to give
-         * headroom when all 3 channels play simultaneously (prevents
-         * inter-channel summing distortion). */
+        /* Step 1: reduce each PSG channel's contribution by 40% */
         int32_t l = (int32_t)src[i * 2]     * 3 / 5;
         int32_t r = (int32_t)src[i * 2 + 1] * 3 / 5;
-        /* Track and remove DC offset */
+        /* DC block */
         dc_l += (l - dc_l) >> 8;
         dc_r += (r - dc_r) >> 8;
         l -= dc_l;
         r -= dc_r;
+        /* 1-pole LPF at ~9.7 kHz — analog RC filter emulation */
+        lp1_l += ((l - lp1_l) * 3) >> 2;
+        lp1_r += ((r - lp1_r) * 3) >> 2;
+        l = lp1_l;
+        r = lp1_r;
 #ifdef HDMI_PIO_AUDIO
-        /* HDMI digital output has no analog RC filter — apply software LPF */
-        lp1_l += (l    - lp1_l) >> 1;
-        lp1_r += (r    - lp1_r) >> 1;
-        lp2_l += (lp1_l - lp2_l) >> 1;
-        lp2_r += (lp1_r - lp2_r) >> 1;
+        /* HDMI: 2 more poles at alpha=1/2 for total 3-pole LPF */
+        lp2_l += (l - lp2_l) >> 1;
+        lp2_r += (r - lp2_r) >> 1;
         lp3_l += (lp2_l - lp3_l) >> 1;
         lp3_r += (lp2_r - lp3_r) >> 1;
         l = lp3_l >> 2;
         r = lp3_r >> 2;
 #endif
-        /* Step 2: boost the final mixed output by 30% to recover level. */
+        /* Step 2: boost the final mixed output by 30% */
         l = l * 13 / 10;
         r = r * 13 / 10;
         /* Clamp to int16 range */
