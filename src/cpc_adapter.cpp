@@ -518,9 +518,9 @@ static void flush_audio(void) {
         l = lp3_l >> 2;
         r = lp3_r >> 2;
 #endif
-        /* Step 2: boost the final mixed output by 40% to recover level. */
-        l = l * 7 / 5;
-        r = r * 7 / 5;
+        /* Step 2: boost the final mixed output by 30% to recover level. */
+        l = l * 13 / 10;
+        r = r * 13 / 10;
         /* Clamp to int16 range */
         if (l >  32767) l =  32767;
         if (l < -32768) l = -32768;
