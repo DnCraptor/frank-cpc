@@ -500,8 +500,8 @@ static void flush_audio(void) {
         /* Step 1: reduce each PSG channel's contribution by 20% to give
          * headroom when all 3 channels play simultaneously (prevents
          * inter-channel summing distortion). */
-        int32_t l = (int32_t)src[i * 2]     * 4 / 5;
-        int32_t r = (int32_t)src[i * 2 + 1] * 4 / 5;
+        int32_t l = (int32_t)src[i * 2]     * 3 / 5;
+        int32_t r = (int32_t)src[i * 2 + 1] * 3 / 5;
         /* Track and remove DC offset */
         dc_l += (l - dc_l) >> 8;
         dc_r += (r - dc_r) >> 8;
@@ -518,9 +518,9 @@ static void flush_audio(void) {
         l = lp3_l >> 2;
         r = lp3_r >> 2;
 #endif
-        /* Step 2: boost the final mixed output by 20% to recover level. */
-        l = l * 6 / 5;
-        r = r * 6 / 5;
+        /* Step 2: boost the final mixed output by 40% to recover level. */
+        l = l * 7 / 5;
+        r = r * 7 / 5;
         /* Clamp to int16 range */
         if (l >  32767) l =  32767;
         if (l < -32768) l = -32768;
