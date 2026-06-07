@@ -581,7 +581,7 @@ int cpc_engine_init(void) {
 #endif
     CPC.snd_bits = 1;            /* 16-bit */
     CPC.snd_stereo = 1;         /* stereo */
-    CPC.snd_volume = 80;
+    CPC.snd_volume = 100;  /* full volume — matches real CPC analog output level */
     CPC.snd_buffersize = SND_BUFFER_SIZE;
     CPC.snd_bufferptr = pbSndBuffer;
     CPC.snd_ready = true;
