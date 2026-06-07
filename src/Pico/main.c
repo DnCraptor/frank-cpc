@@ -53,33 +53,8 @@ static bool s_pwm_audio_inited = false;
 static void ensure_pwm_audio_initialized(void) {
     if (s_pwm_audio_inited) return;
     s_pwm_audio_inited = true;
-    pwm_audio_init(PWM_PIN0, PWM_PIN1, 22050);
+    pwm_audio_init(PWM_PIN0, PWM_PIN1, 44100);
     pwm_audio_set_frame_rate(50);
-}
-
-/* Push stereo samples to PWM, downsampling 44100→22050 by averaging pairs.
- * Input: interleaved L/R at 44100Hz. Output: mono at 22050Hz. */
-static void pwm_push_stereo_downsampled(const int16_t *samples, unsigned count) {
-    /* 441 samples at 22050Hz/50fps — on stack (small enough) */
-    int16_t ds[441];
-    unsigned n = count / 2;
-    if (n > 441) n = 441;
-    for (unsigned i = 0; i < n; ++i) {
-        int32_t l0 = samples[i*4],   r0 = samples[i*4+1];
-        int32_t l1 = samples[i*4+2], r1 = samples[i*4+3];
-        ds[i] = (int16_t)((l0 + r0 + l1 + r1) >> 2);
-    }
-    pwm_audio_push_samples(ds, (int)n);
-}
-
-/* Push mono samples to PWM, downsampling 44100→22050 by averaging pairs. */
-static void pwm_push_mono_downsampled(const int16_t *samples, unsigned count) {
-    int16_t ds[441];
-    unsigned n = count / 2;
-    if (n > 441) n = 441;
-    for (unsigned i = 0; i < n; ++i)
-        ds[i] = (int16_t)(((int32_t)samples[i*2] + (int32_t)samples[i*2+1]) >> 1);
-    pwm_audio_push_samples(ds, (int)n);
 }
 
 #define FB_W CPC_FB_WIDTH
@@ -211,7 +186,7 @@ static bool g_i2s_initialized = false;
 unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
     if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
         ensure_pwm_audio_initialized();
-        pwm_push_mono_downsampled(samples, count);
+        pwm_audio_push_samples(samples, (int)count);
         return count;
     }
     uint32_t prod = g_audio_prod;
@@ -231,8 +206,12 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
         ensure_pwm_audio_initialized();
-        pwm_push_stereo_downsampled(samples, count);
-        return count;
+        int16_t mono[882];
+        unsigned n = count > 882 ? 882 : count;
+        for (unsigned i = 0; i < n; ++i)
+            mono[i] = (int16_t)(((int32_t)samples[i*2] + (int32_t)samples[i*2+1]) >> 1);
+        pwm_audio_push_samples(mono, (int)n);
+        return n;
     }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
@@ -296,7 +275,7 @@ volatile uint32_t g_audio_cons = 0;
 unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
     if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
         ensure_pwm_audio_initialized();
-        pwm_push_mono_downsampled(samples, count);
+        pwm_audio_push_samples(samples, (int)count);
         return count;
     }
     uint32_t prod = g_audio_prod;
@@ -316,8 +295,12 @@ unsigned audio_ring_push_mono(const int16_t *samples, unsigned count) {
 unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
     if (g_cpc_settings.audio_driver == CPC_AUDIO_PWM) {
         ensure_pwm_audio_initialized();
-        pwm_push_stereo_downsampled(samples, count);
-        return count;
+        int16_t mono[882];
+        unsigned n = count > 882 ? 882 : count;
+        for (unsigned i = 0; i < n; ++i)
+            mono[i] = (int16_t)(((int32_t)samples[i*2] + (int32_t)samples[i*2+1]) >> 1);
+        pwm_audio_push_samples(mono, (int)n);
+        return n;
     }
     uint32_t prod = g_audio_prod;
     uint32_t cons = g_audio_cons;
