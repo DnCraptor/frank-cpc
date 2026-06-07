@@ -506,9 +506,10 @@ static void flush_audio(void) {
         dc_r += (r - dc_r) >> 8;
         l -= dc_l;
         r -= dc_r;
-        /* 1-pole LPF at ~14.6 kHz — gentle analog RC filter emulation */
-        lp1_l += ((l - lp1_l) * 7) / 8;
-        lp1_r += ((r - lp1_r) * 7) / 8;
+        /* 1-pole LPF at ~29 kHz (alpha=31/32) — barely any filtering,
+         * just takes the ultrasonic PWM carrier artefacts off. */
+        lp1_l += ((l - lp1_l) * 31) / 32;
+        lp1_r += ((r - lp1_r) * 31) / 32;
         l = lp1_l;
         r = lp1_r;
 #ifdef HDMI_PIO_AUDIO
@@ -520,9 +521,9 @@ static void flush_audio(void) {
         l = lp3_l >> 2;
         r = lp3_r >> 2;
 #endif
-        /* Step 2: boost the final mixed output by 30% */
-        l = l * 13 / 10;
-        r = r * 13 / 10;
+        /* Step 2: boost the final mixed output by 55% */
+        l = l * 31 / 20;
+        r = r * 31 / 20;
         /* Clamp to int16 range */
         if (l >  32767) l =  32767;
         if (l < -32768) l = -32768;
