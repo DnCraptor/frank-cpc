@@ -851,9 +851,19 @@ void set_prerender()
       PreRender = CPC.scr_prerendernorm;
       /* Record where active display starts in scanline buffer.
        * This is used by scanline_complete() to copy from the correct position,
-       * aligning fb column 0 with sprite X=0. Align to 4 bytes for uint32_t copy. */
+       * aligning fb column 0 with sprite X=0. Align to 4 bytes for uint32_t copy.
+       *
+       * Classic CPC uses a stable active area; keep it anchored to the standard
+       * offset so border effects don't shift/corrupt the copied line. */
       extern int crtc_active_display_offset;
-      crtc_active_display_offset = (int)(CPC.scr_pos - CPC.scr_base) & ~3;
+      if (CPC.model > 2) {
+         /* For CPC Plus keep the first active segment offset on this scanline. */
+         if (!crtc_scanline_had_active) {
+            crtc_active_display_offset = (int)(CPC.scr_pos - CPC.scr_base) & ~3;
+         }
+      } else {
+         crtc_active_display_offset = 32;
+      }
    } else {
       if (!static_cast<word>(LastPreRend)) {
          PreRender = CPC.scr_prerenderbord;

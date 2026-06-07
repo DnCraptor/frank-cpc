@@ -445,7 +445,7 @@ void __attribute__((section(".time_critical.adapter"))) scanline_complete(int sc
      * non-standard R2 (e.g., Robocop 2 R2=45, offset=40) leave stale
      * border content at the left edge that would be hidden by a real CRT bezel.
      * Mask (offset - 32) bytes to cover the full border leak. */
-    if (crtc_active_display_offset > 32) {
+    if (CPC.model > 2 && crtc_active_display_offset > 32) {
         int mask_bytes = crtc_active_display_offset - 32;
         uint8_t *p = (uint8_t *)dst;
         uint8_t fill = p[mask_bytes]; /* first real pixel after border */
