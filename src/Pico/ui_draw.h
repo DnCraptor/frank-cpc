@@ -34,6 +34,9 @@ extern const uint8_t ui_font_6x8[UI_FONT_GLYPHS][UI_FONT_GLYPH_BYTES];
 #define UI_COLOR_ACCENT  245   /* titlebar fill (inverse) */
 #define UI_COLOR_ACCENT_FG 244 /* titlebar text */
 #define UI_COLOR_DIM     243   /* scrollbar track */
+#define UI_COLOR_ERROR   242   /* error highlight (red) */
+#define UI_COLOR_OK      241   /* success highlight (green) */
+#define UI_COLOR_BLACK   240   /* solid black (text backdrop) */
 
 /* Call once from the UI init path; pushes the reserved RGB colors
  * into the HDMI driver's palette so the overlay is legible regardless

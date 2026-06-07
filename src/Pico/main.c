@@ -47,6 +47,7 @@
 #include "pwm_audio.h"
 #include "cpc_settings.h"
 #include "ui_draw.h"
+#include "cpc_boot.h"
 
 /* Lazy-init PWM audio on first use. */
 static bool s_pwm_audio_inited = false;
@@ -363,40 +364,113 @@ void __time_critical_func(render_core)(void) {
 
 extern void cpc_pico_main(void);
 
-static void boot_error_screen(bool psram_ok, FRESULT sd_result) {
-    ui_draw_install_palette();
-    graphics_set_buffer(SCREEN[0]);
-    memset(SCREEN[0], 0, FB_W * CPC_SCREEN_LINES);
+/* Draw a text line with a black padded backdrop over the plasma background */
+static void boot_draw_line(uint8_t *fb, int x, int y, const char *text, uint8_t color) {
+    int w = (int)strlen(text) * UI_CHAR_W;
+    ui_fill_rect(fb, FB_W, x - 4, y - 2, w + 8, UI_CHAR_H + 4, UI_COLOR_BLACK);
+    ui_draw_string(fb, FB_W, x, y, text, color);
+}
 
+static void boot_error_screen(bool psram_ok, FRESULT sd_result) {
+    /* Sine LUT for plasma — in flash (static const) to avoid using RAM */
+    static const int8_t plasma_sin[256] = {
+           0,    3,    6,    9,   12,   16,   19,   22,   25,   28,   31,   34,   37,   40,   43,   46,
+          49,   51,   54,   57,   60,   63,   65,   68,   71,   73,   76,   78,   81,   83,   85,   88,
+          90,   92,   94,   96,   98,  100,  102,  104,  106,  107,  109,  111,  112,  113,  115,  116,
+         117,  118,  120,  121,  122,  122,  123,  124,  125,  125,  126,  126,  126,  127,  127,  127,
+         127,  127,  127,  127,  126,  126,  126,  125,  125,  124,  123,  122,  122,  121,  120,  118,
+         117,  116,  115,  113,  112,  111,  109,  107,  106,  104,  102,  100,   98,   96,   94,   92,
+          90,   88,   85,   83,   81,   78,   76,   73,   71,   68,   65,   63,   60,   57,   54,   51,
+          49,   46,   43,   40,   37,   34,   31,   28,   25,   22,   19,   16,   12,    9,    6,    3,
+           0,   -3,   -6,   -9,  -12,  -16,  -19,  -22,  -25,  -28,  -31,  -34,  -37,  -40,  -43,  -46,
+         -49,  -51,  -54,  -57,  -60,  -63,  -65,  -68,  -71,  -73,  -76,  -78,  -81,  -83,  -85,  -88,
+         -90,  -92,  -94,  -96,  -98, -100, -102, -104, -106, -107, -109, -111, -112, -113, -115, -116,
+        -117, -118, -120, -121, -122, -122, -123, -124, -125, -125, -126, -126, -126, -127, -127, -127,
+        -127, -127, -127, -127, -126, -126, -126, -125, -125, -124, -123, -122, -122, -121, -120, -118,
+        -117, -116, -115, -113, -112, -111, -109, -107, -106, -104, -102, -100,  -98,  -96,  -94,  -92,
+         -90,  -88,  -85,  -83,  -81,  -78,  -76,  -73,  -71,  -68,  -65,  -63,  -60,  -57,  -54,  -51,
+         -49,  -46,  -43,  -40,  -37,  -34,  -31,  -28,  -25,  -22,  -19,  -16,  -12,   -9,   -6,   -3,
+    };
+
+    /* 64-color red plasma palette — black → deep red → bright red (no white) — in flash */
+    static const uint32_t plasma_pal[64] = {
+        0x080000, 0x1a0000, 0x280000, 0x350000, 0x400100, 0x4b0100, 0x560200, 0x5f0300,
+        0x690300, 0x720400, 0x7b0500, 0x830600, 0x8b0700, 0x920700, 0x990800, 0xa00900,
+        0xa70a00, 0xad0b00, 0xb20b00, 0xb80c00, 0xbd0d00, 0xc10e00, 0xc50e00, 0xc90f00,
+        0xcd0f00, 0xd01000, 0xd21000, 0xd41100, 0xd61100, 0xd81100, 0xd91100, 0xd91100,
+        0xda1200, 0xd91100, 0xd91100, 0xd81100, 0xd61100, 0xd41100, 0xd21000, 0xd01000,
+        0xcd0f00, 0xc90f00, 0xc50e00, 0xc10e00, 0xbd0d00, 0xb80c00, 0xb20b00, 0xad0b00,
+        0xa70a00, 0xa00900, 0x990800, 0x920700, 0x8b0700, 0x830600, 0x7b0500, 0x720400,
+        0x690300, 0x5f0300, 0x560200, 0x4b0100, 0x400100, 0x350000, 0x280000, 0x1a0000,
+    };
+
+    ui_draw_install_palette();
+
+    /* Load plasma palette into slots 16-79 (CPC not running, these are free) */
+    for (int i = 0; i < 64; i++)
+        graphics_set_palette((uint8_t)(16 + i), plasma_pal[i]);
+
+    /* Draw plasma into the framebuffer background (one-time) */
+    for (int py = 0; py < CPC_SCREEN_LINES; py++) {
+        for (int px = 0; px < FB_W; px++) {
+            int v = (int)plasma_sin[(uint8_t)(px * 2)]
+                  + (int)plasma_sin[(uint8_t)(py * 2)]
+                  + (int)plasma_sin[(uint8_t)(px + py)]
+                  + (int)plasma_sin[(uint8_t)(px - py)];
+            SCREEN[0][py * FB_W + px] = (uint8_t)(16 + (uint8_t)((v + 508) >> 4));
+        }
+    }
+    graphics_set_buffer(SCREEN[0]);
+
+    /* Draw error text on top — uses UI_COLOR_* indices 241-247, unaffected by cycling */
     const int x = 18;
     int y = 24;
-    ui_draw_string(SCREEN[0], FB_W, x, y, "frank-cpc startup stopped", UI_COLOR_FG);
+    boot_draw_line(SCREEN[0], x, y, "frank-cpc failed to start", UI_COLOR_FG);
     y += 18;
 
     if (!psram_ok) {
-        ui_draw_string(SCREEN[0], FB_W, x, y, "PSRAM: not detected", UI_COLOR_ACCENT_FG);
+        boot_draw_line(SCREEN[0], x, y, "PSRAM: not detected", UI_COLOR_ERROR);
         y += 10;
     } else {
-        ui_draw_string(SCREEN[0], FB_W, x, y, "PSRAM: OK", UI_COLOR_FG);
+        boot_draw_line(SCREEN[0], x, y, "PSRAM: OK", UI_COLOR_OK);
         y += 10;
     }
 
     if (sd_result != FR_OK) {
         char buf[48];
-        snprintf(buf, sizeof(buf), "SD card: f_mount failed (%d)", (int)sd_result);
-        ui_draw_string(SCREEN[0], FB_W, x, y, buf, UI_COLOR_ACCENT_FG);
+        snprintf(buf, sizeof(buf), "SD card: could not be mounted (error %d)", (int)sd_result);
+        boot_draw_line(SCREEN[0], x, y, buf, UI_COLOR_ERROR);
         y += 10;
     } else {
-        ui_draw_string(SCREEN[0], FB_W, x, y, "SD card: OK", UI_COLOR_FG);
+        boot_draw_line(SCREEN[0], x, y, "SD card: OK", UI_COLOR_OK);
         y += 10;
     }
 
     y += 8;
-    ui_draw_string(SCREEN[0], FB_W, x, y, "Emulator was not started.", UI_COLOR_FG);
+    boot_draw_line(SCREEN[0], x, y, "The emulator could not be started.", UI_COLOR_FG);
     y += 10;
-    ui_draw_string(SCREEN[0], FB_W, x, y, "Install PSRAM and SD card, then reboot.", UI_COLOR_FG);
+    boot_draw_line(SCREEN[0], x, y, "Please solder PSRAM and insert an SD card,", UI_COLOR_FG);
+    y += 10;
+    boot_draw_line(SCREEN[0], x, y, "then reboot.", UI_COLOR_FG);
 
-    while (true) tight_loop_contents();
+    y += 20;
+    boot_draw_line(SCREEN[0], x, y, "github.com/rh1tech/frank-cpc", UI_COLOR_DIM);
+    y += 10;
+    {
+        char info[50];
+        snprintf(info, sizeof(info), "frank-cpc v%s | (c) 2026 Mikhail Matveev",
+                 FRANK_CPC_VERSION);
+        boot_draw_line(SCREEN[0], x, y, info, UI_COLOR_DIM);
+    }
+
+    /* Animate: cycle palette phase each frame — zero extra RAM, ~30 fps */
+    uint8_t phase = 0;
+    while (true) {
+        for (int i = 0; i < 64; i++)
+            graphics_set_palette((uint8_t)(16 + i), plasma_pal[(uint8_t)(i + phase) & 63]);
+        phase++;
+        sleep_ms(33);
+    }
 }
 
 static void boot_halt_if_required(bool psram_ok, FRESULT sd_result) {
@@ -570,6 +644,10 @@ int main(void) {
     while (!core1_ready) tight_loop_contents();
     printf("I2S audio started (44100 Hz)\n");
 #endif
+
+    printf("Showing welcome screen...\n");
+    cpc_boot_welcome(10000);
+    printf("Welcome screen done\n");
 
     cpc_pico_main();
 

@@ -24,6 +24,9 @@ void ui_draw_install_palette(void) {
     graphics_set_palette(UI_COLOR_ACCENT,    0xe8e8e8);  /* titlebar fill */
     graphics_set_palette(UI_COLOR_ACCENT_FG, 0x20283c);  /* titlebar text */
     graphics_set_palette(UI_COLOR_DIM,       0x606878);  /* scrollbar track */
+    graphics_set_palette(UI_COLOR_ERROR,     0xff4040);  /* error red */
+    graphics_set_palette(UI_COLOR_OK,        0x40c040);  /* success green */
+    graphics_set_palette(UI_COLOR_BLACK,     0x000000);  /* solid black */
 }
 
 static inline void put_pixel(uint8_t *fb, int stride, int x, int y, uint8_t color) {

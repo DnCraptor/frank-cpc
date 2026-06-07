@@ -19,4 +19,4 @@ if [ ! -f "$FIRMWARE" ]; then
 fi
 
 echo "Flashing: $FIRMWARE"
-picotool load -f "$FIRMWARE" && picotool reboot -f
+picotool load -f "$FIRMWARE"
