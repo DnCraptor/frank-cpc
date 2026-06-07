@@ -98,27 +98,35 @@ void cpc_frame_present(void) {
 static uint64_t g_next_frame_us = 0;
 #define FRAME_PERIOD_US 20000
 
-/* Audio-driven frame sync: pace emulation so the I2S ring buffer stays fed.
- * Target: keep ring ~2 chunks (1764 frames) ahead.  If ring is getting empty,
- * skip the wait so emulation runs full-speed to catch up.  If ring is healthy,
- * wait the normal 20ms to avoid running ahead. */
+/* Audio-driven frame sync: pace emulation to exactly 50fps.
+ *
+ * For I2S: also monitor the ring buffer — if it's running low, skip the
+ * wait so the emulation can catch up and refill it.
+ *
+ * For PWM: PWM bypasses the ring (audio_ring_avail() always returns 0),
+ * so we use pure wall-clock timing unconditionally.
+ */
 extern unsigned audio_ring_avail(void);
 
 void cpc_frame_sync(void) {
     if (g_cpc_settings.fast_tape && cpc_tape_is_loaded() && cpc_tape_get_motor()) {
+        /* Fast-tape: run uncapped during tape loads */
         g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
         return;
     }
 
-    /* If audio ring has fewer than 2 chunks buffered, skip wait entirely
-     * to let emulation run as fast as possible and refill the ring. */
-    unsigned avail = audio_ring_avail();
-    if (avail < 882 * 2) {
-        g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
-        return;
+    /* I2S only: if the ring has fewer than 2 chunks buffered, skip the
+     * wait to let emulation catch up.  PWM and HDMI don't use the ring
+     * so we never skip for them — emulation is always wall-clock limited. */
+    if (g_cpc_settings.audio_driver == CPC_AUDIO_I2S) {
+        unsigned avail = audio_ring_avail();
+        if (avail < 882 * 2) {
+            g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
+            return;
+        }
     }
 
-    /* Ring is healthy — sync to wall clock as normal */
+    /* Wall-clock 50fps sync */
     if (g_next_frame_us == 0)
         g_next_frame_us = time_us_64() + FRAME_PERIOD_US;
 
@@ -127,6 +135,7 @@ void cpc_frame_sync(void) {
         while (time_us_64() < g_next_frame_us) tight_loop_contents();
         g_next_frame_us += FRAME_PERIOD_US;
     } else if (now - g_next_frame_us > 2 * FRAME_PERIOD_US) {
+        /* Fell too far behind (e.g. heavy disk I/O) — resync */
         g_next_frame_us = now + FRAME_PERIOD_US;
     } else {
         g_next_frame_us += FRAME_PERIOD_US;
