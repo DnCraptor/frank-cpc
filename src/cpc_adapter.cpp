@@ -523,8 +523,9 @@ static void flush_audio(void) {
         lp1_r += ((r - lp1_r) * 3) >> 2;
         lp2_l += ((lp1_l - lp2_l) * 3) >> 2;
         lp2_r += ((lp1_r - lp2_r) * 3) >> 2;
-        audio_out_buf[i * 2]     = (int16_t)lp2_l;
-        audio_out_buf[i * 2 + 1] = (int16_t)lp2_r;
+        /* Attenuate to match real CPC analog output levels (-12 dB) */
+        audio_out_buf[i * 2]     = (int16_t)(lp2_l >> 2);
+        audio_out_buf[i * 2 + 1] = (int16_t)(lp2_r >> 2);
 #endif
     }
 }
