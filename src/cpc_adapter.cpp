@@ -485,14 +485,13 @@ static void flush_audio(void) {
     const int16_t *src = (const int16_t *)pbSndBuffer;
     audio_out_count = frames;
 
-    /* Two-pole cascaded IIR low-pass to smooth PSG square-wave edges,
-     * mimicking the analog RC filtering on the real CPC audio output.
-     * Each pole: alpha = 3/4 → combined -3dB at ~6.5 kHz, -12dB/oct. */
+    /* Three-pole cascaded IIR low-pass to smooth PSG square-wave edges.
+     * All paths: alpha = 1/2 → cascade -3dB at ~3 kHz, -18dB/oct.
+     * This matches the HDMI path and provides good suppression of
+     * square-wave harmonics for both I2S DAC and PWM RC-filter outputs. */
     static int32_t lp1_l = 0, lp1_r = 0;
     static int32_t lp2_l = 0, lp2_r = 0;
-#ifdef HDMI_PIO_AUDIO
-    static int32_t lp3_l = 0, lp3_r = 0;   /* 3rd pole for HDMI */
-#endif
+    static int32_t lp3_l = 0, lp3_r = 0;
     /* DC-blocking high-pass (AC coupling like real CPC hardware).
      * Uses a slow-tracking DC estimator: dc += (x - dc) >> 8
      * which gives a ~17 Hz cutoff at 44100 Hz. */
@@ -505,28 +504,16 @@ static void flush_audio(void) {
         dc_r += (r - dc_r) >> 8;
         l -= dc_l;
         r -= dc_r;
-        /* Low-pass filter to smooth PSG square-wave edges.
-         * HDMI: 3-pole at alpha=1/2 (~1.8 kHz -3dB, -18dB/oct)
-         * I2S:  2-pole at alpha=3/4 (~6.5 kHz -3dB, -12dB/oct) */
-#ifdef HDMI_PIO_AUDIO
-        lp1_l += (l - lp1_l) >> 1;
-        lp1_r += (r - lp1_r) >> 1;
+        /* 3-pole IIR LPF, alpha=1/2 on all paths */
+        lp1_l += (l    - lp1_l) >> 1;
+        lp1_r += (r    - lp1_r) >> 1;
         lp2_l += (lp1_l - lp2_l) >> 1;
         lp2_r += (lp1_r - lp2_r) >> 1;
         lp3_l += (lp2_l - lp3_l) >> 1;
         lp3_r += (lp2_r - lp3_r) >> 1;
-        /* Attenuate to match real CPC analog output levels */
+        /* Attenuate to match real CPC analog output levels (-12 dB) */
         audio_out_buf[i * 2]     = (int16_t)(lp3_l >> 2);
         audio_out_buf[i * 2 + 1] = (int16_t)(lp3_r >> 2);
-#else
-        lp1_l += ((l - lp1_l) * 3) >> 2;
-        lp1_r += ((r - lp1_r) * 3) >> 2;
-        lp2_l += ((lp1_l - lp2_l) * 3) >> 2;
-        lp2_r += ((lp1_r - lp2_r) * 3) >> 2;
-        /* Attenuate to match real CPC analog output levels (-12 dB) */
-        audio_out_buf[i * 2]     = (int16_t)(lp2_l >> 2);
-        audio_out_buf[i * 2 + 1] = (int16_t)(lp2_r >> 2);
-#endif
     }
 }
 
