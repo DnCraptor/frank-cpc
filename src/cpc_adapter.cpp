@@ -485,16 +485,17 @@ static void flush_audio(void) {
     const int16_t *src = (const int16_t *)pbSndBuffer;
     audio_out_count = frames;
 
-    /* Two-pole cascaded IIR low-pass to smooth PSG square-wave edges,
-     * mimicking the analog RC filtering on the real CPC audio output.
-     * alpha = 3/4 → single-pole -3dB at ~12 kHz, two-pole effective ~7 kHz. */
-    static int32_t lp1_l = 0, lp1_r = 0;
-    static int32_t lp2_l = 0, lp2_r = 0;
-    static int32_t lp3_l = 0, lp3_r = 0;  /* 3rd pole — HDMI only */
     /* DC-blocking high-pass (AC coupling like real CPC hardware).
      * Uses a slow-tracking DC estimator: dc += (x - dc) >> 8
      * which gives a ~17 Hz cutoff at 44100 Hz. */
     static int32_t dc_l = 0, dc_r = 0;
+#ifdef HDMI_PIO_AUDIO
+    /* HDMI: 3-pole IIR LPF at alpha=1/2 to compensate for the lack of
+     * analog RC filtering on the digital HDMI output path. */
+    static int32_t lp1_l = 0, lp1_r = 0;
+    static int32_t lp2_l = 0, lp2_r = 0;
+    static int32_t lp3_l = 0, lp3_r = 0;
+#endif
     for (int i = 0; i < frames; ++i) {
         int32_t l = src[i * 2];
         int32_t r = src[i * 2 + 1];
@@ -504,7 +505,7 @@ static void flush_audio(void) {
         l -= dc_l;
         r -= dc_r;
 #ifdef HDMI_PIO_AUDIO
-        /* HDMI: 3-pole at alpha=1/2 (~3 kHz effective, -18dB/oct) */
+        /* HDMI digital output has no analog RC filter — apply software LPF */
         lp1_l += (l    - lp1_l) >> 1;
         lp1_r += (r    - lp1_r) >> 1;
         lp2_l += (lp1_l - lp2_l) >> 1;
@@ -514,16 +515,16 @@ static void flush_audio(void) {
         audio_out_buf[i * 2]     = (int16_t)(lp3_l >> 2);
         audio_out_buf[i * 2 + 1] = (int16_t)(lp3_r >> 2);
 #else
-        /* I2S / PWM: 2-pole at alpha=3/4 (~7 kHz effective, -12dB/oct).
-         * Preserves the AY chip's characteristic harmonic content while
-         * reducing the sharpest square-wave edges. */
-        lp1_l += ((l    - lp1_l) * 3) >> 2;
-        lp1_r += ((r    - lp1_r) * 3) >> 2;
-        lp2_l += ((lp1_l - lp2_l) * 3) >> 2;
-        lp2_r += ((lp1_r - lp2_r) * 3) >> 2;
-        /* Attenuate to match real CPC analog output levels (-12 dB) */
-        audio_out_buf[i * 2]     = (int16_t)(lp2_l >> 2);
-        audio_out_buf[i * 2 + 1] = (int16_t)(lp2_r >> 2);
+        /* I2S / PWM: no LPF — the real CPC AY output is essentially
+         * unfiltered (just AC-coupled). The I2S DAC's analog output
+         * stage and the PWM RC filter provide natural roll-off.
+         * Clamp to int16 range to prevent rare overflow. */
+        if (l >  32767) l =  32767;
+        if (l < -32768) l = -32768;
+        if (r >  32767) r =  32767;
+        if (r < -32768) r = -32768;
+        audio_out_buf[i * 2]     = (int16_t)l;
+        audio_out_buf[i * 2 + 1] = (int16_t)r;
 #endif
     }
 }
