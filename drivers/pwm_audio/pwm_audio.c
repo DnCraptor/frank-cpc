@@ -51,9 +51,10 @@
 static uint32_t pwm_wrap = 4095;
 static uint32_t pwm_center = 2047;
 
-/* Ring buffer cap. 1024 covers CPC at 44100 Hz / 50 fps (882 samples)
- * with headroom. */
-#define DMA_BUFFER_SAMPLES 1024
+/* Buffer sized to hold ~2 full 50fps frames (2 × 882 = 1764 samples).
+ * Capped at 1720 to stay within SRAM budget (5.5KB headroom on M2).
+ * 2 DMA buffers × 1720 = ~78ms — gives nearly 2 frames of jitter headroom. */
+#define DMA_BUFFER_SAMPLES 1720
 #define DMA_BUFFER_COUNT   2
 #define PREROLL_BUFFERS    2
 
