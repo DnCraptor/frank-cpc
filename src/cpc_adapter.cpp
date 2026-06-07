@@ -497,8 +497,11 @@ static void flush_audio(void) {
     static int32_t lp3_l = 0, lp3_r = 0;
 #endif
     for (int i = 0; i < frames; ++i) {
-        int32_t l = src[i * 2];
-        int32_t r = src[i * 2 + 1];
+        /* Step 1: reduce each PSG channel's contribution by 20% to give
+         * headroom when all 3 channels play simultaneously (prevents
+         * inter-channel summing distortion). */
+        int32_t l = (int32_t)src[i * 2]     * 4 / 5;
+        int32_t r = (int32_t)src[i * 2 + 1] * 4 / 5;
         /* Track and remove DC offset */
         dc_l += (l - dc_l) >> 8;
         dc_r += (r - dc_r) >> 8;
@@ -512,20 +515,19 @@ static void flush_audio(void) {
         lp2_r += (lp1_r - lp2_r) >> 1;
         lp3_l += (lp2_l - lp3_l) >> 1;
         lp3_r += (lp2_r - lp3_r) >> 1;
-        audio_out_buf[i * 2]     = (int16_t)(lp3_l >> 2);
-        audio_out_buf[i * 2 + 1] = (int16_t)(lp3_r >> 2);
-#else
-        /* I2S / PWM: no LPF — the real CPC AY output is essentially
-         * unfiltered (just AC-coupled). The I2S DAC's analog output
-         * stage and the PWM RC filter provide natural roll-off.
-         * Clamp to int16 range to prevent rare overflow. */
+        l = lp3_l >> 2;
+        r = lp3_r >> 2;
+#endif
+        /* Step 2: boost the final mixed output by 20% to recover level. */
+        l = l * 6 / 5;
+        r = r * 6 / 5;
+        /* Clamp to int16 range */
         if (l >  32767) l =  32767;
         if (l < -32768) l = -32768;
         if (r >  32767) r =  32767;
         if (r < -32768) r = -32768;
         audio_out_buf[i * 2]     = (int16_t)l;
         audio_out_buf[i * 2 + 1] = (int16_t)r;
-#endif
     }
 }
 
