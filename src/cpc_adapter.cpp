@@ -506,9 +506,9 @@ static void flush_audio(void) {
         dc_r += (r - dc_r) >> 8;
         l -= dc_l;
         r -= dc_r;
-        /* 1-pole LPF at ~9.7 kHz — analog RC filter emulation */
-        lp1_l += ((l - lp1_l) * 3) >> 2;
-        lp1_r += ((r - lp1_r) * 3) >> 2;
+        /* 1-pole LPF at ~14.6 kHz — gentle analog RC filter emulation */
+        lp1_l += ((l - lp1_l) * 7) / 8;
+        lp1_r += ((r - lp1_r) * 7) / 8;
         l = lp1_l;
         r = lp1_r;
 #ifdef HDMI_PIO_AUDIO
