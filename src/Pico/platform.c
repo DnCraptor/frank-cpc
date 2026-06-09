@@ -107,6 +107,7 @@ static uint64_t g_next_frame_us = 0;
  * so we use pure wall-clock timing unconditionally.
  */
 extern unsigned audio_ring_avail(void);
+extern void i2s_audio_drain(void);
 
 void cpc_frame_sync(void) {
     if (g_cpc_settings.fast_tape && cpc_tape_is_loaded() && cpc_tape_get_motor()) {
@@ -838,6 +839,12 @@ void cpc_pico_main(void) {
 
         cpc_engine_run_frame();
         cpc_frame_present();
+#if defined(VGA_HSTX) || defined(VIDEO_COMPOSITE)
+        /* VGA_HSTX / COMPOSITE claim Core 1 for scanout, so the I2S ring is
+         * drained here on Core 0 once per frame (the dedicated Core 1 audio
+         * render loop used by the HDMI paths is unavailable). */
+        i2s_audio_drain();
+#endif
         cpc_serial_poll();
         cpc_frame_sync();
 

@@ -61,8 +61,21 @@ static void ensure_pwm_audio_initialized(void) {
 #define FB_W CPC_FB_WIDTH
 #define FB_H CPC_FB_HEIGHT
 
+/*
+ * Video buffering: drivers that scan out via their own dedicated framebuffer
+ * (VGA_HSTX -> vga_framebuffer, COMPOSITE -> tv_frame) consume the CPC frame
+ * synchronously inside graphics_set_buffer(), so a second CPC back-buffer is
+ * never read asynchronously and only one screen_mem buffer is required.
+ * The PIO HDMI driver, by contrast, DMA-reads SCREEN[!current_buffer]
+ * per-scanline and needs both buffers.
+ */
+#if defined(VGA_HSTX) || defined(VIDEO_COMPOSITE)
+static uint8_t __attribute__((aligned(4))) screen_mem[1][FB_W * CPC_SCREEN_LINES];
+uint8_t *SCREEN[2] = { screen_mem[0], screen_mem[0] };
+#else
 static uint8_t __attribute__((aligned(4))) screen_mem[2][FB_W * CPC_SCREEN_LINES];
 uint8_t *SCREEN[2] = { screen_mem[0], screen_mem[1] };
+#endif
 volatile uint32_t current_buffer = 1;  /* Start at 1: SCREEN[0] is the initial display buffer */
 
 static FATFS g_fs;
@@ -231,6 +244,10 @@ unsigned audio_ring_push_stereo(const int16_t *samples, unsigned count) {
 
 unsigned audio_ring_free(void) {
     return AUDIO_RING_FRAMES - (g_audio_prod - g_audio_cons);
+}
+
+unsigned audio_ring_avail(void) {
+    return g_audio_prod - g_audio_cons;
 }
 
 static void i2s_audio_init_core0(void) {
