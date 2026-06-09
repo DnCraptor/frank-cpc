@@ -27,10 +27,13 @@ NC='\033[0m'
 # Build matrix: "platform:prefix:video_suffix:hdmi_driver"
 BUILD_MATRIX=(
     "m2:m2p2_:hdmi-pio:HDMI_PIO"
+    "m2:m2p2_:hdmi-pio-audio:HDMI_PIO_AUDIO"
     "m2:m2p2_:tv:COMPOSITE"
     "m1:m1p2_:hdmi-pio:HDMI_PIO"
+    "m1:m1p2_:hdmi-pio-audio:HDMI_PIO_AUDIO"
     "m1:m1p2_:tv:COMPOSITE"
     "z0:z0p2_:hdmi-pio:HDMI_PIO"
+    "z0:z0p2_:hdmi-pio-audio:HDMI_PIO_AUDIO"
 )
 
 VERSION_FILE="version.txt"
@@ -55,7 +58,7 @@ echo -e "${CYAN}│                    FRANK CPC Release Builder                
 echo -e "${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
 echo ""
 echo -e "Last version: ${YELLOW}${LAST_MAJOR}.$(printf '%02d' $LAST_MINOR)${NC}"
-echo -e "Variants: ${CYAN}${#BUILD_MATRIX[@]}${NC} (m2x2, m1x2, z0x1)"
+echo -e "Variants: ${CYAN}${#BUILD_MATRIX[@]}${NC} (m2x3, m1x3, z0x2)"
 echo ""
 
 DEFAULT_VERSION="${NEXT_MAJOR}.$(printf '%02d' $NEXT_MINOR)"

@@ -96,9 +96,6 @@ set(HDMI_DRIVER "HDMI_PIO" CACHE STRING "HDMI driver: HDMI_PIO (I2S audio) or HD
 set_property(CACHE HDMI_DRIVER PROPERTY STRINGS "HDMI_PIO" "HDMI_PIO_AUDIO" "VGA_HSTX" "COMPOSITE")
 
 # Validate video driver vs platform constraints
-if(HDMI_DRIVER STREQUAL "HDMI_PIO_AUDIO" AND NOT PLATFORM STREQUAL "m2")
-    message(FATAL_ERROR "HDMI_PIO_AUDIO is only supported on the M2 platform (got '${PLATFORM}')")
-endif()
 if(HDMI_DRIVER STREQUAL "VGA_HSTX" AND NOT PLATFORM STREQUAL "m2")
     message(FATAL_ERROR "VGA_HSTX is only supported on the M2 platform (got '${PLATFORM}')")
 endif()
