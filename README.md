@@ -4,6 +4,16 @@ Amstrad CPC 464 / 664 / 6128 emulator for the Raspberry Pi Pico 2 (RP2350). HDMI
 
 Based on [Caprice32](https://github.com/ColinPitrat/caprice32) by Ulrich Doewich, with the [cpc4x](http://www.amstrad-cpc.de) adapter layer by Ulrich Cordes. IPF disk image support via the [SPS Decoder Library](http://www.softpres.org/) (capsimg).
 
+> **Code heritage:** this project reuses code from several existing CPC emulators and Pico homebrew projects. Caprice32 provides the full emulation core (Z80, CRTC, Gate Array, AY PSG, FDC); cpc4x contributes the dialog and printer adapter layer. Platform drivers (HDMI, composite TV, PS/2, NES pad, USB HID) are adapted from open-source Pico projects — see the [License](#license) section for full attribution.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![BASIC boot screen](screenshots/screenshot1.jpg) | ![Gameplay](screenshots/screenshot2.jpg) |
+| ![Prince of Persia](screenshots/screenshot3.jpg) | ![Platformer gameplay](screenshots/screenshot4.jpg) |
+| ![Get Dexter 2](screenshots/screenshot5.jpg) | |
+
 ## Supported platforms
 
 Three RP2350 boards. Each has its own pin layout and its own set of video and audio backends.
@@ -34,8 +44,8 @@ Select the platform at build time: `PLATFORM=m1 ./build.sh`. Default is `m2`. Th
 - Mono and stereo output modes.
 - Three audio backends, switchable from the settings menu:
   - HDMI: audio embedded in the HDMI stream. PIO HDMI+audio builds only.
-  - I2S: external DAC. M1/M2 only.
-  - PWM: two-pin PWM into an RC low-pass filter. Works on every board.
+  - I2S: external DAC (recommended for best audio quality). M1/M2 only.
+  - PWM: two-pin PWM into an RC low-pass filter. Works on every board, but audio quality is limited — expect noise and reduced fidelity compared to I2S or HDMI.
   - Disabled: silence.
 
 ### Video
@@ -120,11 +130,11 @@ HDMI/VGA pins connect through 270 Ω resistors. PWM and I2S share pins; the acti
 ### SD card setup
 
 1. Format an SD card as FAT32.
-2. Create a `/cpc/disk/` directory in the root.
-3. Copy your software into `/cpc/disk/`: `.dsk`, `.ipf`, `.cdt`, `.cpr` files. Subdirectories are fine.
+2. Extract `sdcard/cpc.zip` (from this repository) to the **root** of the SD card. This creates the `cpc/` directory tree, including ROM files and the `cpc/disk/` and `cpc/screenshot/` subdirectories.
+3. Copy your software into `cpc/disk/`: `.dsk`, `.ipf`, `.cdt`, `.cpr` files. Subdirectories are fine.
 4. Insert the card. Power on.
 
-No BIOS ROMs are required — Caprice32 includes built-in CPC firmware.
+The zip includes all required ROM images (`cpc464.rom`, `cpc664.rom`, `cpc6128.rom`, `amsdos.rom`, `mf2.rom`, `droyal12.rom`).
 
 ### During gameplay
 
